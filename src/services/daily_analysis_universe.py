@@ -70,7 +70,7 @@ def normalize_daily_analysis_symbol(symbol: str, market_hint: Optional[str] = No
     if not raw:
         return ""
     market = (market_hint or "").strip().lower()
-    if market == "tw" and raw.isdigit() and (len(raw) == 4 or (len(raw) == 6 and raw.startswith("00"))):
+    if market == "tw" and raw.isdigit() and (len(raw) == 4 or raw.startswith("00")):
         return f"{raw}.TW"
     return canonical_stock_code(raw)
 
@@ -104,6 +104,21 @@ def _coerce_non_negative_float(value: Optional[float], field_name: str) -> Optio
     if numeric < 0:
         raise ValueError(f"{field_name} must be >= 0")
     return numeric
+
+
+def _dedupe_strings(values: Iterable[str]) -> List[str]:
+    seen: set[str] = set()
+    result: List[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
 
 
 class DailyAnalysisUniverseService:
@@ -224,6 +239,8 @@ class DailyAnalysisUniverseService:
         max_stocks: int = DEFAULT_DAILY_ANALYSIS_MAX_STOCKS,
         watch_score_threshold: int = DEFAULT_DAILY_ANALYSIS_WATCH_SCORE_THRESHOLD,
         include_portfolio_holdings: bool = True,
+        include_user_required: bool = True,
+        preserve_shared_slots: bool = False,
     ) -> Dict[str, Any]:
         min_count = max(0, int(min_stocks))
         max_count = max(1, int(max_stocks))
@@ -231,10 +248,16 @@ class DailyAnalysisUniverseService:
             max_count = min_count
 
         required: "OrderedDict[str, DailyAnalysisUniverseItem]" = OrderedDict()
-        self._add_user_required_symbols(required)
-        if include_portfolio_holdings:
-            self._add_cached_portfolio_holdings(required)
-        self._add_legacy_watchlist(required, config_stock_list or [])
+        if preserve_shared_slots:
+            if include_portfolio_holdings:
+                self._add_cached_portfolio_holdings(required)
+            self._add_legacy_watchlist(required, config_stock_list or [])
+        else:
+            if include_user_required:
+                self._add_user_required_symbols(required)
+            if include_portfolio_holdings:
+                self._add_cached_portfolio_holdings(required)
+            self._add_legacy_watchlist(required, config_stock_list or [])
 
         candidates = self._candidate_items(excluded=set(required.keys()))
         selected_candidates = [
@@ -254,15 +277,92 @@ class DailyAnalysisUniverseService:
             final_items = list(required.values()) + selected_candidates[:available_slots]
             truncated_candidates = selected_candidates[available_slots:]
 
+        if preserve_shared_slots and include_user_required:
+            final_by_symbol: "OrderedDict[str, DailyAnalysisUniverseItem]" = OrderedDict(
+                (item.symbol, item) for item in final_items
+            )
+            self._add_user_required_symbols(final_by_symbol)
+            final_items = list(final_by_symbol.values())
+
         return {
             "symbols": [item.symbol for item in final_items],
             "items": [item.to_dict() for item in final_items],
-            "required_count": len(required),
-            "candidate_count": max(0, len(final_items) - len(required)),
+            "required_count": sum(1 for item in final_items if item.required),
+            "candidate_count": sum(1 for item in final_items if not item.required),
             "min_stocks": min_count,
             "max_stocks": max_count,
             "watch_score_threshold": int(watch_score_threshold),
             "truncated_candidate_count": len(truncated_candidates),
+        }
+
+    def build_email_routing(
+        self,
+        *,
+        config_stock_list: Optional[Iterable[str]] = None,
+        default_receivers: Optional[Iterable[str]] = None,
+        min_stocks: int = DEFAULT_DAILY_ANALYSIS_MIN_STOCKS,
+        max_stocks: int = DEFAULT_DAILY_ANALYSIS_MAX_STOCKS,
+        watch_score_threshold: int = DEFAULT_DAILY_ANALYSIS_WATCH_SCORE_THRESHOLD,
+        include_portfolio_holdings: bool = True,
+    ) -> Dict[str, Any]:
+        """Build per-user email recipient groups for automatic daily analysis."""
+
+        shared_universe = self.build_universe(
+            config_stock_list=config_stock_list,
+            min_stocks=min_stocks,
+            max_stocks=max_stocks,
+            watch_score_threshold=watch_score_threshold,
+            include_portfolio_holdings=include_portfolio_holdings,
+            include_user_required=False,
+        )
+        shared_symbols = list(shared_universe.get("symbols") or [])
+        default_emails = _dedupe_strings(default_receivers or [])
+        routed_email_keys: set[str] = set()
+        groups: List[Dict[str, Any]] = []
+
+        for user in self.list_users(include_inactive=False):
+            email = str(user.get("email") or "").strip()
+            if not email or not user.get("daily_email_enabled", True):
+                continue
+            user_key = str(user.get("user_key") or "").strip()
+            if not user_key:
+                continue
+            user_symbols = [
+                normalize_daily_analysis_symbol(
+                    str(item.get("symbol") or ""),
+                    market_hint=str(item.get("market") or "tw"),
+                )
+                for item in self.list_user_stocks(user_key=user_key)
+            ]
+            symbols = _dedupe_strings([*shared_symbols, *user_symbols])
+            if not symbols:
+                continue
+            groups.append(
+                {
+                    "label": f"daily-user:{user_key}",
+                    "user_key": user_key,
+                    "receivers": [email],
+                    "symbols": symbols,
+                }
+            )
+            routed_email_keys.add(email.lower())
+
+        default_only_receivers = [
+            email for email in default_emails if email.lower() not in routed_email_keys
+        ]
+        if default_only_receivers and shared_symbols:
+            groups.append(
+                {
+                    "label": "daily-default",
+                    "user_key": None,
+                    "receivers": default_only_receivers,
+                    "symbols": shared_symbols,
+                }
+            )
+
+        return {
+            "shared_symbols": shared_symbols,
+            "groups": groups,
         }
 
     def _add_item(
@@ -278,7 +378,20 @@ class DailyAnalysisUniverseService:
         reason: str,
     ) -> None:
         symbol_norm = normalize_daily_analysis_symbol(symbol, market_hint=market)
-        if not symbol_norm or symbol_norm in target:
+        if not symbol_norm:
+            return
+        if symbol_norm in target:
+            existing = target[symbol_norm]
+            if required and not existing.required:
+                target[symbol_norm] = DailyAnalysisUniverseItem(
+                    symbol=symbol_norm,
+                    stock_name=_display_stock_name(symbol_norm, stock_name) or existing.stock_name,
+                    market=infer_daily_analysis_market(symbol_norm, fallback=market),
+                    required=True,
+                    source=source,
+                    watch_score=max(existing.watch_score, max(0, min(100, int(watch_score)))),
+                    reason=reason,
+                )
             return
         target[symbol_norm] = DailyAnalysisUniverseItem(
             symbol=symbol_norm,

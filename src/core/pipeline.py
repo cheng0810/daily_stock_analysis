@@ -3846,6 +3846,52 @@ class StockAnalysisPipeline:
             logger.error("回退写入报告失败: %s", exc)
             return None
 
+    def _resolve_daily_analysis_email_groups(
+        self,
+        results: List[AnalysisResult],
+    ) -> List[Dict[str, Any]]:
+        routing = getattr(self, "daily_analysis_email_routing", None)
+        if not isinstance(routing, dict):
+            return []
+        raw_groups = routing.get("groups")
+        if not isinstance(raw_groups, list):
+            return []
+
+        resolved_groups: List[Dict[str, Any]] = []
+        for raw_group in raw_groups:
+            if not isinstance(raw_group, dict):
+                continue
+            receivers = [
+                str(email or "").strip()
+                for email in raw_group.get("receivers", [])
+                if str(email or "").strip()
+            ]
+            if not receivers:
+                continue
+            symbol_keys = {
+                normalize_stock_code(str(symbol or "").strip())
+                for symbol in raw_group.get("symbols", [])
+                if str(symbol or "").strip()
+            }
+            if not symbol_keys:
+                continue
+            group_results = [
+                result
+                for result in results
+                if normalize_stock_code(str(getattr(result, "code", "") or "")) in symbol_keys
+            ]
+            if not group_results:
+                continue
+            label = str(raw_group.get("label") or ",".join(receivers)).strip()
+            resolved_groups.append(
+                {
+                    "label": label or "daily-user",
+                    "receivers": list(dict.fromkeys(receivers)),
+                    "results": group_results,
+                }
+            )
+        return resolved_groups
+
     def _send_notifications(
         self,
         results: List[AnalysisResult],
@@ -4118,7 +4164,58 @@ class StockAnalysisPipeline:
                             channel_error,
                         )
                     elif channel == NotificationChannel.EMAIL:
-                        if stock_email_groups:
+                        daily_email_groups = self._resolve_daily_analysis_email_groups(results)
+                        if daily_email_groups:
+                            for group in daily_email_groups:
+                                group_results = group["results"]
+                                receivers = group["receivers"]
+
+                                def _send_daily_email_group(
+                                    group_results=group_results,
+                                    receivers=receivers,
+                                ) -> bool:
+                                    grp_report = self._generate_aggregate_report(group_results, report_type)
+                                    grp_image_bytes = None
+                                    if channel.value in self.notifier._markdown_to_image_channels:
+                                        group_payload = (
+                                            _share_image_payload(group_results[0])
+                                            if len(group_results) == 1
+                                            else None
+                                        )
+                                        group_image_kwargs: Dict[str, Any] = {
+                                            "max_chars": self.notifier._markdown_to_image_max_chars,
+                                        }
+                                        if group_payload is not None:
+                                            group_image_kwargs["structured_payload"] = group_payload
+                                        grp_image_bytes = markdown_to_image(
+                                            grp_report,
+                                            **group_image_kwargs,
+                                        )
+                                    use_image = self.notifier._should_use_image_for_channel(
+                                        channel, grp_image_bytes
+                                    )
+                                    if use_image:
+                                        return self.notifier._send_email_with_inline_image(
+                                            grp_image_bytes, receivers=receivers
+                                        )
+                                    return self.notifier.send_to_email(
+                                        strip_hidden_markdown_metadata(grp_report).strip(),
+                                        receivers=receivers,
+                                    )
+
+                                email_label = f"{channel.value}:{group['label']}"
+                                channel_success, channel_error = _send_channel_safely(
+                                    email_label,
+                                    _send_daily_email_group,
+                                )
+                                non_wechat_success = channel_success or non_wechat_success
+                                _record_channel_result(
+                                    email_label,
+                                    channel_success,
+                                    channel_error,
+                                    target_results=group_results,
+                                )
+                        elif stock_email_groups:
                             code_to_emails: Dict[str, Optional[List[str]]] = {}
                             for r in results:
                                 if r.code not in code_to_emails:

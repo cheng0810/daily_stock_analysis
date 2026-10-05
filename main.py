@@ -638,11 +638,14 @@ def _resolve_portfolio_stock_codes(args: argparse.Namespace) -> Optional[List[st
 def _resolve_daily_analysis_stock_codes(config: Config) -> List[str]:
     """Return the automatic daily universe with STOCK_LIST as a fallback."""
     fallback_codes = list(getattr(config, "stock_list", []) or [])
+    if not _should_use_daily_analysis_universe(config):
+        return fallback_codes
     try:
         from src.services.daily_analysis_universe import DailyAnalysisUniverseService
 
         universe = DailyAnalysisUniverseService().build_universe(
             config_stock_list=fallback_codes,
+            preserve_shared_slots=True,
         )
         symbols = list(universe.get("symbols") or [])
         if not universe.get("required_count") and not fallback_codes:
@@ -661,6 +664,47 @@ def _resolve_daily_analysis_stock_codes(config: Config) -> List[str]:
     except Exception as exc:  # noqa: BLE001 - stock universe enrichment must not block the run.
         logger.warning("每日分析清单生成失败，沿用 STOCK_LIST: %s", exc)
         return fallback_codes
+
+
+def _looks_like_taiwan_daily_symbol(symbol: Any) -> bool:
+    raw = str(symbol or "").strip().upper()
+    if not raw:
+        return False
+    if raw.endswith((".TW", ".TWO")):
+        return True
+    return raw.isdigit() and (len(raw) == 4 or raw.startswith("00"))
+
+
+def _should_use_daily_analysis_universe(config: Config) -> bool:
+    """Gate the Taiwan daily universe to Taiwan watchlists or explicit opt-in."""
+    explicit = getattr(config, "daily_analysis_universe_enabled", None)
+    if explicit is not None:
+        return bool(explicit)
+    return any(
+        _looks_like_taiwan_daily_symbol(code)
+        for code in list(getattr(config, "stock_list", []) or [])
+    )
+
+
+def _build_daily_analysis_email_routing(config: Config) -> Optional[Dict[str, Any]]:
+    """Build per-user email routing for automatic daily-analysis runs."""
+    if not _should_use_daily_analysis_universe(config):
+        return None
+    try:
+        from src.services.daily_analysis_universe import DailyAnalysisUniverseService
+
+        routing = DailyAnalysisUniverseService().build_email_routing(
+            config_stock_list=list(getattr(config, "stock_list", []) or []),
+            default_receivers=list(getattr(config, "email_receivers", []) or []),
+        )
+        groups = list(routing.get("groups") or [])
+        if not groups:
+            return None
+        logger.info("每日分析邮件路由已生成: groups=%s", len(groups))
+        return routing
+    except Exception as exc:  # noqa: BLE001 - email routing must not block analysis.
+        logger.warning("每日分析邮件路由生成失败，将沿用默认邮件收件人: %s", exc)
+        return None
 
 
 def _prime_daily_market_context(
@@ -884,9 +928,15 @@ def run_full_analysis(
 
         using_config_stock_list = stock_codes is None and portfolio_stock_codes is None
         # Issue #373: Trading day filter (per-stock, per-market)
+        uses_daily_analysis_universe = (
+            stock_codes is None
+            and portfolio_stock_codes is None
+            and using_config_stock_list
+            and _should_use_daily_analysis_universe(config)
+        )
         if stock_codes is not None:
             effective_codes = stock_codes
-        elif refresh_watchlist:
+        elif refresh_watchlist and uses_daily_analysis_universe:
             effective_codes = _resolve_daily_analysis_stock_codes(config)
         else:
             effective_codes = list(getattr(config, "stock_list", []) or [])
@@ -998,6 +1048,8 @@ def run_full_analysis(
             daily_market_context_enabled=should_use_daily_market_context,
             daily_market_context_allow_generate=should_use_daily_market_context,
         )
+        if uses_daily_analysis_universe:
+            pipeline.daily_analysis_email_routing = _build_daily_analysis_email_routing(config)
         if should_use_daily_market_context:
             # Prompt-side context can reuse historical summaries, while full-merge
             # content must avoid silently reusing unrelated historical reports.
@@ -1281,11 +1333,17 @@ def run_scheduled_analysis(
 
     from src.services.scheduled_analysis_claim import run_claimed_scheduled_analysis
 
+    def _prepare_snapshot(snapshot: Config) -> Config:
+        if stock_codes is None and _should_use_daily_analysis_universe(snapshot):
+            snapshot.stock_list = _resolve_daily_analysis_stock_codes(snapshot)
+        return snapshot
+
     return run_claimed_scheduled_analysis(
         config, args, scheduled_for,
         lambda snapshot: run_full_analysis(
             snapshot, args, stock_codes, raise_errors=True, refresh_watchlist=False,
         ),
+        prepare_snapshot=_prepare_snapshot,
     )
 
 

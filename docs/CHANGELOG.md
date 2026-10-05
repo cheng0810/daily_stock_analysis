@@ -112,7 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 新增 Yahoo Finance RSS 股票新闻兜底，并为单股分析新增 `ANALYSIS_LLM_MAX_TOKENS` 与 `ANALYSIS_LLM_STREAM_ENABLED`，降低本地 OpenAI-compatible 模型输出 JSON 被截断或 stream 不兼容的概率。
 - [改进] 报告输出新增 `REPORT_LANGUAGE=zh-TW` 繁体中文模式，并为台股常用标的补充中文名称映射，避免 Yahoo Finance 英文名或 LLM 错名污染报告。
 - [改进] `REPORT_SUMMARY_ONLY=true` 改为新手版摘要，保留每档建议、现价、消息面、买/加码点、卖/减码点和风险说明，同时隐藏完整技术细节。
-- [新功能] 新增多使用者每日分析必跑股票清单，自动任务会合并使用者持股/观察股、Portfolio 非零持仓与 `STOCK_LIST`，再从台股科技/ETF 候选池补足最多 15 档。
+- [新功能] 新增多使用者每日分析必跑股票清单，台股自动任务会先从 Portfolio 非零持仓、`STOCK_LIST` 与台股科技/ETF 候选池建立最多 15 档共同清单，再额外追加使用者持股/观察股。
+- [改进] 每日分析邮件按使用者分流：有 Email 的使用者收到共同自动清单加自己的持股/观察股，未绑定使用者的 `EMAIL_RECEIVERS` 收共同清单；使用者自订股不再占用共同候选清单最多 15 档名额。
 - [改进] Web 持仓页新增每日分析清单管理与候选股票卡片，卡片包含必跑/候选来源、观察分数、最新收盘与近日日线迷你 K 线。
 - [测试] 新增每日分析 universe 服务与 Web 持仓页每日分析清单测试，覆盖必跑股不被 15 档上限丢弃、台股代码标准化和新增自订股票流程。
 

@@ -244,7 +244,10 @@ def get_daily_analysis_universe() -> DailyAnalysisUniverseResponse:
     service = DailyAnalysisUniverseService()
     try:
         return DailyAnalysisUniverseResponse(
-            **service.build_universe(config_stock_list=getattr(config, "stock_list", []) or [])
+            **service.build_universe(
+                config_stock_list=getattr(config, "stock_list", []) or [],
+                preserve_shared_slots=True,
+            )
         )
     except Exception as exc:
         raise _internal_error("Build daily analysis universe failed", exc)

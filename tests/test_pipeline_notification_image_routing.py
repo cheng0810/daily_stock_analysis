@@ -147,6 +147,39 @@ class TestPipelineEmailGroupImageRouting(unittest.TestCase):
         self.assertEqual(calls[1].kwargs["notification_runs"][0]["status"], "success")
         self.assertEqual(calls[1].kwargs["notification_runs"][0]["channel"], "email:default")
 
+    @patch("src.md2img.markdown_to_image", return_value=None)
+    def test_daily_analysis_email_routing_sends_user_and_default_reports(self, _mock_md2img):
+        pipeline = self._build_pipeline()
+        pipeline.config = SimpleNamespace(stock_email_groups=[])
+        pipeline.daily_analysis_email_routing = {
+            "groups": [
+                {
+                    "label": "daily-user:cheng",
+                    "receivers": ["andy@example.com"],
+                    "symbols": ["2330.TW", "00878.TW"],
+                },
+                {
+                    "label": "daily-default",
+                    "receivers": ["rita@example.com"],
+                    "symbols": ["2330.TW"],
+                },
+            ]
+        }
+        results = [
+            SimpleNamespace(code="2330.TW"),
+            SimpleNamespace(code="00878.TW"),
+            SimpleNamespace(code="2412.TW"),
+        ]
+
+        pipeline._send_notifications(results, ReportType.SIMPLE)
+
+        self.assertEqual(pipeline.notifier.send_to_email.call_count, 2)
+        calls = pipeline.notifier.send_to_email.call_args_list
+        self.assertEqual(calls[0].args[0], "report:2330.TW,00878.TW")
+        self.assertEqual(calls[0].kwargs["receivers"], ["andy@example.com"])
+        self.assertEqual(calls[1].args[0], "report:2330.TW")
+        self.assertEqual(calls[1].kwargs["receivers"], ["rita@example.com"])
+
 
 class _FakeWechatNotifier:
     def __init__(self):

@@ -1092,7 +1092,7 @@ P6 将既有 `market_phase_summary` 与 `analysis_context_pack_overview` 复用�
 
 持仓页新增手动单股分析入口，对应 `POST /api/v1/portfolio/positions/{symbol}/analysis`。请求字段为 `account_id`、`analysis_phase=auto|premarket|intraday|postmarket` 和 `force`；只有当前持仓快照中非零持仓可提交，无持仓返回 404，多账户同持一只股票但未传 `account_id` 返回 `400 ambiguous_position_account`。该入口沿用异步任务 accepted / duplicate 语义，`force` 只影响分析刷新，不绕过 in-flight duplicate。后端只把低敏 `portfolio_context` 传入内部 pipeline 和 context pack 的可选 `portfolio` block；该 block 不参与既有六块数据质量总分，也不会出现在任务列表或 SSE payload 中。
 
-每日分析流程新增用户自定义必跑清单。Web `/portfolio` 的“每日分析清单”区块可录入使用者、Email、台股代码、`holding|watch` 类型、股数和成本；后端写入 `daily_analysis_users` 与 `daily_analysis_user_stocks`。自动分析未传 CLI `--stocks` 时，会将所有启用用户持股/观察股、Portfolio 快照缓存中的非零持仓、既有 `STOCK_LIST` 合并为必跑集合，再从内建台股科技/ETF 候选池按 `watch_score` 补足，默认至少 10 档、最多 15 档；如果必跑集合本身超过 15 档，不会丢弃使用者持股或自选，只是不再补候选股。Web 卡片会调用既有 `GET /api/v1/stocks/{stock_code}/history` 展示近日日线迷你 K 线；该展示失败时只影响卡片，不影响每日分析清单或排程。
+每日分析流程新增用户自定义必跑清单。Web `/portfolio` 的“每日分析清单”区块可录入使用者、Email、台股代码、`holding|watch` 类型、股数和成本；后端写入 `daily_analysis_users` 与 `daily_analysis_user_stocks`。自动分析未传 CLI `--stocks` 且 `STOCK_LIST` 为台股清单时，会先生成共同自动清单：Portfolio 快照缓存中的非零持仓、既有 `STOCK_LIST` 与内建台股科技/ETF 候选池按 `watch_score` 补足，默认至少 10 档、共同清单最多 15 档；随后再把所有启用用户持股/观察股作为额外必跑股加入，因此使用者自订股不会挤掉共同候选股。邮件推送会按使用者分流：有 Email 且启用每日邮件的使用者收到共同清单加自己的持股/观察股；`EMAIL_RECEIVERS` 中未绑定到每日分析使用者的邮箱收到共同清单。Web 卡片会调用既有 `GET /api/v1/stocks/{stock_code}/history` 展示近日日线迷你 K 线；该展示失败时只影响卡片，不影响每日分析清单或排程。
 
 相关 API：
 - `POST /api/v1/portfolio/daily-analysis/users`：新增或更新每日分析使用者。

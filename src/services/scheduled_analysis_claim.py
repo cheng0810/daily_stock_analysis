@@ -11,7 +11,7 @@ import time
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 
 class ScheduledAnalysisSkipped(Exception):
@@ -68,7 +68,12 @@ def claim_scheduled_analysis(config: Any, args: Any, scheduled_for: datetime) ->
 
 
 def run_claimed_scheduled_analysis(
-    config: Any, args: Any, scheduled_for: datetime, runner: Callable[[Any], Any],
+    config: Any,
+    args: Any,
+    scheduled_for: datetime,
+    runner: Callable[[Any], Any],
+    *,
+    prepare_snapshot: Optional[Callable[[Any], Any]] = None,
 ) -> Any:
     """Freeze, claim and execute the same workload at the final execution boundary.
 
@@ -82,6 +87,10 @@ def run_claimed_scheduled_analysis(
         if callable(refresh):
             refresh()
         snapshot.stock_list = list(getattr(snapshot, "stock_list", []))
+    if callable(prepare_snapshot):
+        prepared = prepare_snapshot(snapshot)
+        if prepared is not None:
+            snapshot = prepared
     try:
         acquired = claim_scheduled_analysis(snapshot, args, scheduled_for)
     except Exception as exc:
