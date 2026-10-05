@@ -14,6 +14,13 @@ from api.v1.errors import api_error
 from api.v1.schemas.analysis import DuplicateTaskErrorResponse, TaskAccepted
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.portfolio import (
+    DailyAnalysisUniverseResponse,
+    DailyAnalysisUserItem,
+    DailyAnalysisUserListResponse,
+    DailyAnalysisUserStockItem,
+    DailyAnalysisUserStockListResponse,
+    DailyAnalysisUserStockUpsertRequest,
+    DailyAnalysisUserUpsertRequest,
     PortfolioAccountCreateRequest,
     PortfolioAccountItem,
     PortfolioAccountListResponse,
@@ -44,6 +51,7 @@ from src.services.portfolio_service import (
     PortfolioOversellError,
     PortfolioService,
 )
+from src.services.daily_analysis_universe import DailyAnalysisUniverseService
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +119,135 @@ def list_accounts(
         return PortfolioAccountListResponse(accounts=[PortfolioAccountItem(**item) for item in rows])
     except Exception as exc:
         raise _internal_error("List accounts failed", exc)
+
+
+@router.post(
+    "/daily-analysis/users",
+    response_model=DailyAnalysisUserItem,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Create or update a daily analysis user",
+)
+def upsert_daily_analysis_user(request: DailyAnalysisUserUpsertRequest) -> DailyAnalysisUserItem:
+    service = DailyAnalysisUniverseService()
+    try:
+        data = service.upsert_user(
+            user_key=request.user_key,
+            display_name=request.display_name,
+            email=request.email,
+            daily_email_enabled=request.daily_email_enabled,
+            is_active=request.is_active,
+        )
+        return DailyAnalysisUserItem(**data)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Upsert daily analysis user failed", exc)
+
+
+@router.get(
+    "/daily-analysis/users",
+    response_model=DailyAnalysisUserListResponse,
+    responses={500: {"model": ErrorResponse}},
+    summary="List daily analysis users",
+)
+def list_daily_analysis_users(
+    include_inactive: bool = Query(False, description="Whether to include inactive users"),
+) -> DailyAnalysisUserListResponse:
+    service = DailyAnalysisUniverseService()
+    try:
+        users = [DailyAnalysisUserItem(**item) for item in service.list_users(include_inactive=include_inactive)]
+        return DailyAnalysisUserListResponse(users=users)
+    except Exception as exc:
+        raise _internal_error("List daily analysis users failed", exc)
+
+
+@router.post(
+    "/daily-analysis/stocks",
+    response_model=DailyAnalysisUserStockItem,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Create or update a user required daily-analysis symbol",
+)
+def upsert_daily_analysis_stock(request: DailyAnalysisUserStockUpsertRequest) -> DailyAnalysisUserStockItem:
+    service = DailyAnalysisUniverseService()
+    try:
+        data = service.upsert_user_stock(
+            user_key=request.user_key,
+            symbol=request.symbol,
+            relation_type=request.relation_type,
+            stock_name=request.stock_name,
+            market=request.market,
+            shares=request.shares,
+            avg_cost=request.avg_cost,
+            buy_date=request.buy_date,
+            note=request.note,
+            display_name=request.display_name,
+            email=request.email,
+            daily_email_enabled=request.daily_email_enabled,
+        )
+        return DailyAnalysisUserStockItem(**data)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Upsert daily analysis stock failed", exc)
+
+
+@router.get(
+    "/daily-analysis/stocks",
+    response_model=DailyAnalysisUserStockListResponse,
+    responses={500: {"model": ErrorResponse}},
+    summary="List user required daily-analysis symbols",
+)
+def list_daily_analysis_stocks(
+    user_key: Optional[str] = Query(None, description="Optional user key"),
+    include_disabled: bool = Query(False, description="Whether to include disabled symbols"),
+) -> DailyAnalysisUserStockListResponse:
+    service = DailyAnalysisUniverseService()
+    try:
+        rows = service.list_user_stocks(user_key=user_key, include_disabled=include_disabled)
+        return DailyAnalysisUserStockListResponse(
+            items=[DailyAnalysisUserStockItem(**item) for item in rows]
+        )
+    except Exception as exc:
+        raise _internal_error("List daily analysis stocks failed", exc)
+
+
+@router.delete(
+    "/daily-analysis/stocks/{stock_id}",
+    response_model=PortfolioDeleteResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Delete a user required daily-analysis symbol",
+)
+def delete_daily_analysis_stock(stock_id: int) -> PortfolioDeleteResponse:
+    service = DailyAnalysisUniverseService()
+    try:
+        ok = service.delete_user_stock(stock_id)
+        if not ok:
+            raise api_error(404, "not_found", f"Daily analysis stock not found: {stock_id}")
+        return PortfolioDeleteResponse(deleted=1)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _internal_error("Delete daily analysis stock failed", exc)
+
+
+@router.get(
+    "/daily-analysis/universe",
+    response_model=DailyAnalysisUniverseResponse,
+    responses={500: {"model": ErrorResponse}},
+    summary="Preview automatic daily-analysis stock universe",
+)
+def get_daily_analysis_universe() -> DailyAnalysisUniverseResponse:
+    from src.config import get_config
+
+    config = get_config()
+    config.refresh_stock_list()
+    service = DailyAnalysisUniverseService()
+    try:
+        return DailyAnalysisUniverseResponse(
+            **service.build_universe(config_stock_list=getattr(config, "stock_list", []) or [])
+        )
+    except Exception as exc:
+        raise _internal_error("Build daily analysis universe failed", exc)
 
 
 @router.put(

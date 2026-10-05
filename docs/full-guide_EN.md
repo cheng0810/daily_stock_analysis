@@ -115,7 +115,8 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 |------------|------|:----:|
 | `SINGLE_STOCK_NOTIFY` | Single stock push mode: set to `true` to push immediately after each stock analysis | Optional |
 | `REPORT_TYPE` | Report type: `simple` (concise), `full` (complete), `brief` (3-5 sentences), Docker recommended: `full` | Optional |
-| `REPORT_LANGUAGE` | Report output language: `zh` (default Chinese) / `en` (English) / `ko` (Korean); also updates prompt instructions, templates, notification fallbacks, and fixed copy in the Web report view. `ko` reuses the English structural scaffolding and constrains the model to Korean output via an output-language directive; notifications render localized labels by report language. The bundled `00-daily-analysis.yml` already maps this variable, so setting it in Actions Secrets/Variables works out of the box | Optional |
+| `REPORT_LANGUAGE` | Report output language: `zh` (default Simplified Chinese) / `zh-TW` (Traditional Chinese) / `en` (English) / `ko` (Korean); also updates prompt instructions, templates, notification fallbacks, and fixed copy in the Web report view. `zh-TW` uses Traditional Chinese and Taiwan-style investing terms, while `ko` reuses the English structural scaffolding and constrains the model to Korean output via an output-language directive. The bundled `00-daily-analysis.yml` already maps this variable, so setting it in Actions Secrets/Variables works out of the box | Optional |
+| `REPORT_SUMMARY_ONLY` | Push only a beginner-friendly summary when set to `true`; each stock still includes advice, current price, news context, buy/add levels, sell/reduce levels, and risks, while full technical details are omitted. Defaults to `false` | Optional |
 | `REPORT_SHOW_LLM_MODEL` | Whether notification report footers show the LLM model used for analysis. Defaults to `true`; set to `false` to hide runtime model metadata. This switch only affects presentation and does not change provider/model/Base URL, LiteLLM routing, or runtime model save/migration/cleanup behavior. | Optional |
 | `REPORT_TEMPLATES_DIR` | Jinja2 template directory (relative to project root, default `templates`) | Optional |
 | `REPORT_RENDERER_ENABLED` | Enable Jinja2 template rendering (default `false`, zero regression) | Optional |
@@ -212,6 +213,8 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 | `LLM_HERMES_BASE_URL` | Hermes local loopback `/v1` endpoint; defaults to `http://127.0.0.1:8642/v1`; remote endpoints are not supported | `http://127.0.0.1:8642/v1` | No |
 | `LLM_HERMES_MODELS` | Raw Hermes model list; Phase 3 defaults to `hermes-agent`, maps to runtime route `openai/hermes-agent`, and does not support Vision, stream, tools, or Agent tools | `hermes-agent` | No |
 | `LITELLM_CONFIG` | Advanced model routing YAML path (expert use) | - | No |
+| `ANALYSIS_LLM_MAX_TOKENS` | Maximum output tokens for single-stock analysis JSON generation; increase when local models truncate JSON | `8192` | No |
+| `ANALYSIS_LLM_STREAM_ENABLED` | Force streaming on/off for single-stock analysis; leave empty for auto mode, which disables streaming for local OpenAI-compatible endpoints | Auto | No |
 | `LLM_USAGE_HMAC_SECRET` | Secret for LLM usage telemetry message HMACs; leave empty to use a generated local data-dir secret file | - | No |
 | `LLM_USAGE_HMAC_KEY_VERSION` | Version label for the LLM usage HMAC key; update it when rotating the secret | `local-v1` | No |
 | `ANSPIRE_API_KEYS` | [Anspire](https://open.anspire.cn/?share_code=QFBC0FYC) API key, one key for the LLM gateway and search | - | Optional |
@@ -314,6 +317,7 @@ For the notification baseline, diagnostics, and deployment notes, see [Notificat
 | `SOCIAL_SENTIMENT_API_URL` | Stock Sentiment API endpoint (default `https://api.adanos.org`) | Optional |
 | `SEARXNG_BASE_URLS` | SearXNG self-hosted instances (quota-free fallback, enable format: json in settings.yml); when empty the app auto-discovers public instances | Optional |
 | `SEARXNG_PUBLIC_INSTANCES_ENABLED` | Auto-discover public SearXNG instances from `searx.space` when `SEARXNG_BASE_URLS` is empty (default `true`) | Optional |
+| `YAHOO_FINANCE_NEWS_ENABLED` | Enable keyless Yahoo Finance RSS stock news for supported symbols such as US and Taiwan stocks before public SearXNG fallback | Default `true` |
 
 > Behavior note: Search and social sentiment are optional enhancement services. If either service fails to initialize, the system logs a warning and degrades gracefully by skipping that stage without blocking the core analysis flow.
 
@@ -1517,6 +1521,20 @@ A: Check if Actions is enabled, and if cron expression is correct (note it's UTC
 - If upstream FX fetch fails, the page may still remain stale after refresh and will explain the fallback result inline.
 - When `PORTFOLIO_FX_UPDATE_ENABLED=false`, the refresh API returns an explicit disabled status and the page shows that online FX refresh is disabled instead of implying that no refreshable pairs exist.
 - Portfolio snapshot `positions[]` includes price metadata such as `price_source`, `price_date`, `price_stale`, and `price_available`. Today's snapshot tries realtime quotes by default, then falls back to the latest historical close on or before `as_of` when the realtime quote is unavailable or non-positive. Passing `include_realtime=false` skips realtime quotes and uses the local historical-close fallback path directly; the Web portfolio page uses this mode to render holdings before slow external realtime quote sources can block the first screen. Historical `as_of` snapshots stay on historical-close semantics and no longer silently treat cost basis as the current price. Missing-price positions are marked with `price_available=false` and excluded from market value / unrealized PnL totals.
+
+### Daily analysis list on `/portfolio`
+
+The `/portfolio` page includes a Daily Analysis List section for user-scoped required symbols. Users can enter a display name, optional email, Taiwan stock code, `holding|watch` relation type, optional shares, and optional average cost. The backend stores these rows in `daily_analysis_users` and `daily_analysis_user_stocks`.
+
+When an automatic analysis run does not pass CLI `--stocks`, the runtime merges all enabled user holdings/watch symbols, cached non-zero portfolio holdings, and the configured `STOCK_LIST` as required symbols. It then fills from the built-in Taiwan tech/ETF candidate pool by `watch_score`, with a default minimum of 10 symbols and maximum of 15 symbols. Required symbols are never dropped when they already exceed the maximum; the runtime simply stops adding optional candidates. The Web cards call the existing `GET /api/v1/stocks/{stock_code}/history` endpoint to render a small recent daily K-line preview. K-line preview failures affect only the card display and do not block the daily analysis schedule.
+
+Related APIs:
+- `POST /api/v1/portfolio/daily-analysis/users`: create or update a daily analysis user.
+- `GET /api/v1/portfolio/daily-analysis/users`: list daily analysis users.
+- `POST /api/v1/portfolio/daily-analysis/stocks`: create or update a required user symbol; in Taiwan market context, bare 4-digit symbols and `00`-prefixed 6-digit ETF symbols are normalized to `.TW`.
+- `GET /api/v1/portfolio/daily-analysis/stocks`: list required user symbols.
+- `DELETE /api/v1/portfolio/daily-analysis/stocks/{stock_id}`: remove a required user symbol.
+- `GET /api/v1/portfolio/daily-analysis/universe`: preview the next automatic analysis symbol universe when no CLI `--stocks` override is used.
 
 ## Agent Tool Data Cache And Persistence
 

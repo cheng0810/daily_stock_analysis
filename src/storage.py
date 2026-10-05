@@ -684,6 +684,46 @@ class PortfolioFxRate(Base):
     )
 
 
+class DailyAnalysisUser(Base):
+    """User profile for personalized daily analysis inputs."""
+
+    __tablename__ = 'daily_analysis_users'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_key = Column(String(64), nullable=False, unique=True, index=True)
+    display_name = Column(String(64))
+    email = Column(String(255), index=True)
+    daily_email_enabled = Column(Boolean, nullable=False, default=True, index=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
+
+
+class DailyAnalysisUserStock(Base):
+    """Per-user symbols that must be included in daily analysis."""
+
+    __tablename__ = 'daily_analysis_user_stocks'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('daily_analysis_users.id'), nullable=False, index=True)
+    symbol = Column(String(16), nullable=False, index=True)
+    stock_name = Column(String(64))
+    market = Column(String(8), nullable=False, default='tw', index=True)
+    relation_type = Column(String(16), nullable=False, default='watch', index=True)
+    shares = Column(Float)
+    avg_cost = Column(Float)
+    buy_date = Column(Date)
+    note = Column(String(255))
+    enabled = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'symbol', name='uix_daily_analysis_user_symbol'),
+        Index('ix_daily_analysis_user_stock_enabled', 'user_id', 'enabled', 'relation_type'),
+    )
+
+
 class ConversationMessage(Base):
     """
     Agent 对话历史记录表

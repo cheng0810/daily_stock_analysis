@@ -28,6 +28,7 @@ from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.base import is_bse_code, normalize_stock_code
 from data_provider.realtime_types import ChipDistribution
+from src.data.stock_mapping import STOCK_NAME_MAP
 from src.analyzer import (
     GeminiAnalyzer,
     AnalysisResult,
@@ -238,6 +239,7 @@ class StockAnalysisPipeline:
                 minimax_keys=self.config.minimax_api_keys,
                 searxng_base_urls=self.config.searxng_base_urls,
                 searxng_public_instances_enabled=self.config.searxng_public_instances_enabled,
+                yahoo_finance_news_enabled=getattr(self.config, "yahoo_finance_news_enabled", True),
                 news_max_age_days=self.config.news_max_age_days,
                 news_strategy_profile=getattr(self.config, "news_strategy_profile", "short"),
             )
@@ -278,6 +280,36 @@ class StockAnalysisPipeline:
                 exc_info=True,
             )
             self.social_sentiment_service = None
+
+    @staticmethod
+    def _prefer_configured_stock_name(
+        code: str,
+        stock_name: Optional[str],
+        report_language: str,
+    ) -> str:
+        """Prefer curated Chinese display names for Chinese reports."""
+        normalized_language = normalize_report_language(report_language)
+        if normalized_language not in {"zh", "zh-tw"}:
+            return stock_name or ""
+
+        raw_code = str(code or "").strip()
+        normalized_code = normalize_stock_code(raw_code) if raw_code else ""
+        candidates = [
+            raw_code,
+            raw_code.upper(),
+            normalized_code,
+            normalized_code.upper() if normalized_code else "",
+        ]
+        if normalized_code and "." not in normalized_code:
+            candidates.extend([
+                f"{normalized_code}.TW",
+                f"{normalized_code}.TWO",
+            ])
+        for candidate in candidates:
+            mapped = STOCK_NAME_MAP.get(candidate)
+            if mapped:
+                return mapped
+        return stock_name or ""
 
     def _emit_progress(self, progress: int, message: str) -> None:
         """Best-effort bridge from pipeline stages to task SSE progress."""
@@ -416,6 +448,7 @@ class StockAnalysisPipeline:
             self._emit_progress(18, f"{code}：正在获取行情与筹码数据")
             # 获取股票名称（先走轻量名称路径，后续若 realtime_quote 有 name 再覆盖）
             stock_name = self.fetcher_manager.get_stock_name(code, allow_realtime=False)
+            stock_name = self._prefer_configured_stock_name(code, stock_name, report_language)
 
             # Step 1: 获取实时行情（量比、换手率等）- 使用统一入口，自动故障切换
             realtime_quote = None
@@ -426,6 +459,7 @@ class StockAnalysisPipeline:
                         # 使用实时行情返回的真实股票名称
                         if realtime_quote.name:
                             stock_name = realtime_quote.name
+                        stock_name = self._prefer_configured_stock_name(code, stock_name, report_language)
                         # 兼容不同数据源的字段（有些数据源可能没有 volume_ratio）
                         volume_ratio = getattr(realtime_quote, 'volume_ratio', None)
                         turnover_rate = getattr(realtime_quote, 'turnover_rate', None)

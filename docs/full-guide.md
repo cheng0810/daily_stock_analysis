@@ -116,8 +116,8 @@ daily_stock_analysis/
 |------------|------|:----:|
 | `SINGLE_STOCK_NOTIFY` | 单股推送模式：设为 `true` 则每分析完一只股票立即推送 | 可选 |
 | `REPORT_TYPE` | 报告类型：`simple`(精简)、`full`(完整)、`brief`(3-5句概括)，Docker环境推荐设为 `full` | 可选 |
-| `REPORT_LANGUAGE` | 报告输出语言：`zh`(默认中文) / `en`(英文) / `ko`(韩文)；会同步影响 Prompt、模板、通知 fallback 与 Web 报告页固定文案。`ko` 复用英文结构骨架并通过输出语言指令约束模型用韩文输出，通知按报告语言渲染本地化标签。仓库自带 `00-daily-analysis.yml` 已显式映射该变量，直接在 Actions Secrets/Variables 中配置即可生效 | 可选 |
-| `REPORT_SUMMARY_ONLY` | 仅分析结果摘要：设为 `true` 时只推送汇总，不含个股详情；多股时适合快速浏览（默认 false，Issue #262） | 可选 |
+| `REPORT_LANGUAGE` | 报告输出语言：`zh`(默认简体中文) / `zh-TW`(繁体中文) / `en`(英文) / `ko`(韩文)；会同步影响 Prompt、模板、通知 fallback 与 Web 报告页固定文案。`zh-TW` 会使用繁体中文与台湾常用投资用语，`ko` 复用英文结构骨架并通过输出语言指令约束模型用韩文输出。仓库自带 `00-daily-analysis.yml` 已显式映射该变量，直接在 Actions Secrets/Variables 中配置即可生效 | 可选 |
+| `REPORT_SUMMARY_ONLY` | 仅分析结果摘要：设为 `true` 时只推送新手版汇总，保留每档的建议、现价、消息面、买/加仓点、卖/减仓点和风险，不含完整技术细节；多股时适合快速浏览（默认 false，Issue #262） | 可选 |
 | `REPORT_SHOW_LLM_MODEL` | 通知报告底部是否显示本次分析使用的 LLM 模型名称，默认 `true`；设为 `false` 可隐藏运行时模型信息。该变量仅调整展示，不影响 provider/model/Base URL、LiteLLM 路由或运行时模型保存/迁移/清理语义。 | 可选 |
 | `REPORT_TEMPLATES_DIR` | Jinja2 模板目录（相对项目根，默认 `templates`） | 可选 |
 | `REPORT_RENDERER_ENABLED` | 启用 Jinja2 模板渲染（默认 `false`，保证零回归） | 可选 |
@@ -249,6 +249,8 @@ daily_stock_analysis/
 | `LLM_HERMES_BASE_URL` | Hermes 本地 loopback `/v1` 地址；默认 `http://127.0.0.1:8642/v1`，不支持远程地址 | `http://127.0.0.1:8642/v1` | 否 |
 | `LLM_HERMES_MODELS` | Hermes 原始模型列表；Phase 3 默认 `hermes-agent`，运行时 route 为 `openai/hermes-agent`，不支持 Vision / stream / tools / Agent tools | `hermes-agent` | 否 |
 | `LITELLM_CONFIG` | 高级模型路由 YAML 配置文件路径（高级） | - | 否 |
+| `ANALYSIS_LLM_MAX_TOKENS` | 单股分析 JSON 生成最大输出 tokens；本地模型输出被截断时可调高 | `8192` | 否 |
+| `ANALYSIS_LLM_STREAM_ENABLED` | 单股分析是否强制启用/禁用 stream；留空为自动，本地 OpenAI-compatible 端点会自动禁用 stream | 自动 | 否 |
 | `LLM_PROMPT_CACHE_TELEMETRY_ENABLED` | Provider prompt cache usage / diagnostics 遥测；不控制 provider implicit cache | `true` | 否 |
 | `LLM_PROMPT_CACHE_HINTS_ENABLED` | 主分析路径是否主动发送已验证的 provider-specific prompt cache hints；Agent 路径当前仅记录 diagnostics，不主动发 hints；默认关闭 | `false` | 否 |
 | `LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL` | Prompt cache 诊断级别：`off` / `basic` / `debug`；basic/debug 仅在 debug 日志和测试可观察对象中提供脱敏诊断，不作为公开 Usage API 或普通设置页输出 | `off` | 否 |
@@ -359,6 +361,7 @@ daily_stock_analysis/
 | `SOCIAL_SENTIMENT_API_URL` | Stock Sentiment API 地址（默认 `https://api.adanos.org`） | 可选 |
 | `SEARXNG_BASE_URLS` | SearXNG 自建实例（无配额兜底，需在 settings.yml 启用 format: json）；留空时默认自动发现公共实例 | 可选 |
 | `SEARXNG_PUBLIC_INSTANCES_ENABLED` | 是否在 `SEARXNG_BASE_URLS` 为空时自动从 `searx.space` 获取公共实例（默认 `true`） | 可选 |
+| `YAHOO_FINANCE_NEWS_ENABLED` | 是否启用 Yahoo Finance RSS 股票新闻（无需 API Key），用于美股/台股等 Yahoo 支持的代码，并优先于公共 SearXNG 兜底 | 默认 `true` |
 | `NEWS_STRATEGY_PROFILE` | 新闻策略窗口档位：`ultra_short`(1天)/`short`(3天)/`medium`(7天)/`long`(30天)；实际窗口取与 `NEWS_MAX_AGE_DAYS` 的最小值 | 默认 `short` |
 | `NEWS_MAX_AGE_DAYS` | 新闻最大时效（天），搜索时限制结果在近期内 | 默认 `3` |
 | `BIAS_THRESHOLD` | 乖离率阈值（%），超过提示不追高；强势趋势股自动放宽到 1.5 倍 | 默认 `5.0` |
@@ -922,6 +925,16 @@ P6 将既有 `market_phase_summary` 与 `analysis_context_pack_overview` 复用�
 告警 phase 摘要来自触发时上下文：symbol 目标按股票市场推断，`target_scope=market` 直接使用 `cn|hk|us|jp|kr` 市场区域，账户级无法唯一定位时允许落为 `unknown`。pack overview 只来自评估器已带 overview 或最近 30 天历史 snapshot 的低敏 overview，缺失时返回 `null`，不伪造 pack，不自动触发轻量 LLM 分析。公开 source 取值为 `alert_trigger_market_context`、`analysis_history_snapshot`、`evaluator_snapshot`、`legacy_text` 或 `null`。
 
 持仓页新增手动单股分析入口，对应 `POST /api/v1/portfolio/positions/{symbol}/analysis`。请求字段为 `account_id`、`analysis_phase=auto|premarket|intraday|postmarket` 和 `force`；只有当前持仓快照中非零持仓可提交，无持仓返回 404，多账户同持一只股票但未传 `account_id` 返回 `400 ambiguous_position_account`。该入口沿用异步任务 accepted / duplicate 语义，`force` 只影响分析刷新，不绕过 in-flight duplicate。后端只把低敏 `portfolio_context` 传入内部 pipeline 和 context pack 的可选 `portfolio` block；该 block 不参与既有六块数据质量总分，也不会出现在任务列表或 SSE payload 中。
+
+每日分析流程新增用户自定义必跑清单。Web `/portfolio` 的“每日分析清单”区块可录入使用者、Email、台股代码、`holding|watch` 类型、股数和成本；后端写入 `daily_analysis_users` 与 `daily_analysis_user_stocks`。自动分析未传 CLI `--stocks` 时，会将所有启用用户持股/观察股、Portfolio 快照缓存中的非零持仓、既有 `STOCK_LIST` 合并为必跑集合，再从内建台股科技/ETF 候选池按 `watch_score` 补足，默认至少 10 档、最多 15 档；如果必跑集合本身超过 15 档，不会丢弃使用者持股或自选，只是不再补候选股。Web 卡片会调用既有 `GET /api/v1/stocks/{stock_code}/history` 展示近日日线迷你 K 线；该展示失败时只影响卡片，不影响每日分析清单或排程。
+
+相关 API：
+- `POST /api/v1/portfolio/daily-analysis/users`：新增或更新每日分析使用者。
+- `GET /api/v1/portfolio/daily-analysis/users`：读取每日分析使用者。
+- `POST /api/v1/portfolio/daily-analysis/stocks`：新增或更新使用者必跑股票；台股语境下裸 4 码或 `00` 开头 6 码会转为 `.TW`。
+- `GET /api/v1/portfolio/daily-analysis/stocks`：读取使用者必跑股票。
+- `DELETE /api/v1/portfolio/daily-analysis/stocks/{stock_id}`：移除一档使用者必跑股票。
+- `GET /api/v1/portfolio/daily-analysis/universe`：预览下一次未指定 `--stocks` 的每日分析股票集合。
 
 历史列表、单股历史、StockBar 和详情会从 `context_snapshot` 提取 `market_phase_summary`；旧记录、缺失 snapshot 或解析失败返回 `null`。回测结果项增加 `market_phase` 与 `market_phase_summary`，结果列表和 performance/summary 查询支持 `analysis_phase=premarket|intraday|postmarket|unknown`；统计统一把 `intraday`、`lunch_break`、`closing_auction` 归入 intraday，把 `non_trading`、缺失和非法值归入 unknown。带 phase 过滤的回测查询会在 repository 层按 SQL 条件批量读取结果和 snapshot，先 bucket 再分页，并在 summary diagnostics 中返回 `phase_breakdown` 与 `raw_phase_counts`。
 

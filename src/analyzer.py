@@ -13,10 +13,12 @@ A股自选股智能分析系统 - AI分析层
 import json
 import logging
 import math
+import ipaddress
 import re
 import time
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple, Callable
+from urllib.parse import urlparse
 
 import litellm
 from json_repair import repair_json
@@ -91,6 +93,7 @@ from src.report_language import (
     localize_operation_advice,
     localize_trend_prediction,
     normalize_report_language,
+    to_traditional_zh,
 )
 from src.schemas.decision_action import build_action_fields
 from src.schemas.decision_scale import (
@@ -112,7 +115,13 @@ def _localized_text(language: Any, *, en: str, zh: str, ko: str) -> str:
         return en
     if normalized == "ko":
         return ko
+    if normalized == "zh-tw":
+        return to_traditional_zh(zh)
     return zh
+
+
+def _is_chinese_report_language(language: Any) -> bool:
+    return normalize_report_language(language) in {"zh", "zh-tw"}
 
 
 def _normalize_risk_warning_values(value: Any) -> List[str]:
@@ -1313,10 +1322,25 @@ def _capital_flow_bias_with_status(
 def _capital_flow_status_for_stability(reason: str, language: str) -> str:
     normalized = str(reason or "").strip().lower()
     if "not_supported" in normalized or "unsupported" in normalized or "not available" in normalized:
-        return "市场资金流服务暂不支持" if language == "zh" else "Capital flow source unsupported"
+        return _localized_text(
+            language,
+            zh="市场资金流服务暂不支持",
+            en="Capital flow source unsupported",
+            ko="자금 흐름 소스를 지원하지 않습니다",
+        )
     if "empty_stock_flow" in normalized or "missing" in normalized:
-        return "资金流数据缺失" if language == "zh" else "capital flow data unavailable"
-    return "资金流数据不可用" if language == "zh" else "capital flow unavailable"
+        return _localized_text(
+            language,
+            zh="资金流数据缺失",
+            en="capital flow data unavailable",
+            ko="자금 흐름 데이터가 없습니다",
+        )
+    return _localized_text(
+        language,
+        zh="资金流数据不可用",
+        en="capital flow unavailable",
+        ko="자금 흐름 데이터를 사용할 수 없습니다",
+    )
 
 
 def _set_decision_stability_unavailable(
@@ -1332,7 +1356,12 @@ def _set_decision_stability_unavailable(
     result.dashboard = dashboard
     dashboard["decision_stability"] = {
         "applied": False,
-        "reason": "资金流不可用，未使用资金流校准" if language == "zh" else "Capital flow unavailable; stability calibration not applied",
+        "reason": _localized_text(
+            language,
+            zh="资金流不可用，未使用资金流校准",
+            en="Capital flow unavailable; stability calibration not applied",
+            ko="자금 흐름을 사용할 수 없어 안정성 보정을 적용하지 않았습니다",
+        ),
         "capital_flow_status": _capital_flow_status_for_stability(flow_status, language),
         "current_price": current_price,
         "support": support,
@@ -1408,8 +1437,17 @@ def _apply_hold_watch_dashboard(
     if not isinstance(core, dict):
         core = {}
         dashboard["core_conclusion"] = core
-    core["signal_type"] = "🟡持有观望" if language == "zh" else "🟡 Hold / Watch"
-    core["one_sentence"] = f"{advice}：{reason}" if language == "zh" else f"{advice}: {reason}"
+    if _is_chinese_report_language(language):
+        core["signal_type"] = _localized_text(
+            language,
+            zh="🟡持有观望",
+            en="🟡 Hold / Watch",
+            ko="🟡 보유 / 관망",
+        )
+        core["one_sentence"] = f"{advice}：{reason}"
+    else:
+        core["signal_type"] = "🟡 Hold / Watch" if normalize_report_language(language) == "en" else "🟡 보유 / 관망"
+        core["one_sentence"] = f"{advice}: {reason}"
 
     position_advice = core.get("position_advice")
     if not isinstance(position_advice, dict):
@@ -1436,7 +1474,7 @@ def _apply_hold_watch_dashboard(
     dashboard["decision_stability"] = stability
 
     if reason and reason not in str(result.risk_warning or ""):
-        sep = "；" if language == "zh" else "; "
+        sep = "；" if _is_chinese_report_language(language) else "; "
         result.risk_warning = f"{result.risk_warning}{sep}{reason}" if result.risk_warning else reason
     result.buy_reason = reason or result.buy_reason
 
@@ -1450,13 +1488,19 @@ def _downgrade_buy_without_capital_flow(
     resistance: Optional[float],
     flow_status: str,
 ) -> None:
+    normalized_language = normalize_report_language(language)
     status_text = _capital_flow_status_for_stability(flow_status, language)
-    if language == "zh":
+    if _is_chinese_report_language(language):
         advice = "持有观察"
         reason = f"{status_text}，买入结论缺少资金面确认，先按观察处理。"
         no_position = "空仓先不追买，等待资金流恢复、支撑确认或有效突破后再行动。"
         has_position = "持仓以关键支撑为风控线，资金流恢复前控制仓位。"
         confidence = "低"
+        if normalized_language == "zh-tw":
+            advice = to_traditional_zh(advice)
+            reason = to_traditional_zh(reason)
+            no_position = to_traditional_zh(no_position)
+            has_position = to_traditional_zh(has_position)
     else:
         advice = "Hold and watch"
         reason = f"{status_text}; the buy call lacks capital-flow confirmation, so treat it as watch-only."
@@ -1521,6 +1565,8 @@ def _set_structural_hold_wording(
     flow_bias: str,
     calibrate_score: bool = False,
 ) -> None:
+    normalized_language = normalize_report_language(language)
+    wording_language = "zh" if normalized_language == "zh-tw" else normalized_language
     advice_map = {
         "zh": {
             "range": "震荡观望",
@@ -1538,8 +1584,8 @@ def _set_structural_hold_wording(
             "hold": "보유 관찰",
         },
     }
-    advice_default = {"zh": "持有观察", "en": "Hold and watch", "ko": "보유 관찰"}.get(language, "Hold and watch")
-    advice = advice_map.get(language, advice_map["en"]).get(advice_key, advice_default)
+    advice_default = {"zh": "持有观察", "en": "Hold and watch", "ko": "보유 관찰"}.get(wording_language, "Hold and watch")
+    advice = advice_map.get(wording_language, advice_map["en"]).get(advice_key, advice_default)
     reason_templates = {
         "zh": {
             "buy_near_resistance": "价格接近压力位且主力资金未确认流入，不宜仅因短线反弹追买。",
@@ -1566,23 +1612,29 @@ def _set_structural_hold_wording(
             "hold_mid_range": "가격이 지지선과 저항선 사이이고 자금 흐름이 불명확해 박스권 관망이 더 실행 가능합니다.",
         },
     }
-    reason = reason_templates.get(language, reason_templates["en"]).get(reason_key, "")
+    reason = reason_templates.get(wording_language, reason_templates["en"]).get(reason_key, "")
+    if normalized_language == "zh-tw":
+        advice = to_traditional_zh(advice)
+        reason = to_traditional_zh(reason)
     if calibrate_score:
         final_action = "watch" if advice_key in {"range", "shakeout"} else "hold"
         _bound_hold_watch_sentiment_score(result, reason=reason, final_action=final_action)
     result.operation_advice = advice
     if advice_key == "range":
-        if language == "zh" and "震荡" not in str(result.trend_prediction):
-            result.trend_prediction = "震荡"
-        elif language == "en":
+        if _is_chinese_report_language(language) and "震荡" not in str(result.trend_prediction) and "震盪" not in str(result.trend_prediction):
+            result.trend_prediction = "震盪" if normalized_language == "zh-tw" else "震荡"
+        elif normalized_language == "en":
             result.trend_prediction = "Sideways"
-        elif language == "ko":
+        elif normalized_language == "ko":
             result.trend_prediction = "횡보"
 
-    if language == "zh":
+    if _is_chinese_report_language(language):
         no_position = "空仓先不追涨杀跌，等待支撑确认、放量突破或资金回流后再行动。"
         has_position = "持仓以关键支撑为风控线，未跌破前以观察和分批控仓为主。"
-    elif language == "ko":
+        if normalized_language == "zh-tw":
+            no_position = to_traditional_zh(no_position)
+            has_position = to_traditional_zh(has_position)
+    elif normalized_language == "ko":
         no_position = "현금 보유 시 추격·투매를 삼가고 지지 확인·대량 돌파·자금 재유입 후 행동하세요."
         has_position = "보유 시 핵심 지지선을 리스크 관리선으로 삼고, 이탈 전까지 관찰과 분할 관리 위주로 대응하세요."
     else:
@@ -1661,6 +1713,52 @@ def get_stock_name_multi_source(
 
     # 4. 返回默认名称
     return f'股票{stock_code}'
+
+
+def _is_placeholder_analysis_name(name: Any, code: str) -> bool:
+    text = str(name or "").strip()
+    if not text:
+        return True
+    lowered = text.lower()
+    if lowered in {"n/a", "na", "none", "null", "unknown"}:
+        return True
+    return text.startswith("股票") or text == code or "Unknown" in text
+
+
+def _replace_stock_name_in_payload(value: Any, old_name: str, new_name: str) -> Any:
+    if not old_name or old_name == new_name:
+        return value
+    if isinstance(value, str):
+        return value.replace(old_name, new_name)
+    if isinstance(value, list):
+        return [
+            _replace_stock_name_in_payload(item, old_name, new_name)
+            for item in value
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _replace_stock_name_in_payload(item, old_name, new_name)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _localize_analysis_payload_strings(value: Any, report_language: str) -> Any:
+    if normalize_report_language(report_language) != "zh-tw":
+        return value
+    if isinstance(value, str):
+        return to_traditional_zh(value)
+    if isinstance(value, list):
+        return [
+            _localize_analysis_payload_strings(item, report_language)
+            for item in value
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _localize_analysis_payload_strings(item, report_language)
+            for key, item in value.items()
+        }
+    return value
 
 
 @dataclass
@@ -1888,6 +1986,8 @@ class GeminiAnalyzer:
 
 ## 输出格式：决策仪表盘 JSON
 
+最终回答只能输出一个完整 JSON object；不要解释、不要 Markdown 代码块、不要输出第二个 JSON。优先保证所有大括号闭合；文字字段用短句，数组最多 2 项，缺资料写“资料不足”。
+
 请严格按照以下 JSON 格式输出，这是一个完整的【决策仪表盘】：
 
 ```json
@@ -2075,6 +2175,8 @@ class GeminiAnalyzer:
 """ + CANONICAL_DECISION_SCALE_PROMPT_ZH + """
 
 ## 输出格式：决策仪表盘 JSON
+
+最终回答只能输出一个完整 JSON object；不要解释、不要 Markdown 代码块、不要输出第二个 JSON。优先保证所有大括号闭合；文字字段用短句，数组最多 2 项，缺资料写“资料不足”。
 
 请严格按照以下 JSON 格式输出，这是一个完整的【决策仪表盘】：
 
@@ -2386,6 +2488,16 @@ class GeminiAnalyzer:
 - Use the common Korean or original listed company name when confident; do not invent one.
 - This includes `stock_name`, `trend_prediction`, `operation_advice`, `confidence_level`, nested dashboard text, checklist items, and all narrative summaries.
 """
+        if lang == "zh-tw":
+            return base_prompt + """
+
+## 輸出語言（最高優先級）
+
+- 所有 JSON 鍵名保持不變。
+- `decision_type` 必須保持為 `buy|hold|sell`。
+- 所有面向使用者的人類可讀文字值必須使用繁體中文與台灣常用投資用語。
+- `stock_name` 與所有摘要、理由、風險、操作建議中的公司名稱，只能使用使用者提示中提供的「股票名稱」或「股票代碼」，不得自行翻譯、猜測或替換成其他公司名稱。
+"""
         return base_prompt + """
 
 ## 输出语言（最高优先级）
@@ -2583,6 +2695,58 @@ class GeminiAnalyzer:
         backend_id = resolve_generation_backend_id(config)
         fallback_backend_id = resolve_generation_fallback_backend_id(config)
         return backend_id, fallback_backend_id
+
+    @staticmethod
+    def _analysis_generation_config(config: Any) -> Dict[str, Any]:
+        return {
+            "temperature": getattr(config, "llm_temperature", 0.7),
+            "max_output_tokens": int(getattr(config, "analysis_llm_max_tokens", 8192) or 8192),
+        }
+
+    @classmethod
+    def _analysis_stream_enabled(cls, config: Any) -> bool:
+        explicit = getattr(config, "analysis_llm_stream_enabled", None)
+        if explicit is not None:
+            return bool(explicit)
+        return not cls._uses_local_openai_compatible_analysis_route(config)
+
+    @classmethod
+    def _uses_local_openai_compatible_analysis_route(cls, config: Any) -> bool:
+        model = str(getattr(config, "litellm_model", "") or "").strip()
+        model_list = getattr(config, "llm_model_list", []) or []
+
+        for deployment in route_deployment_origins(model_list, model).non_hermes_deployments:
+            params = deployment.get("litellm_params") if isinstance(deployment, dict) else None
+            if not isinstance(params, dict):
+                continue
+            for key in ("api_base", "base_url", "api_base_url"):
+                if cls._is_local_llm_base_url(params.get(key)):
+                    return True
+
+        if model.lower().startswith("openai/") and cls._is_local_llm_base_url(
+            getattr(config, "openai_base_url", None)
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _is_local_llm_base_url(value: Any) -> bool:
+        url = str(value or "").strip()
+        if not url:
+            return False
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").strip().lower()
+        if not host:
+            return False
+        if host in {"localhost", "0.0.0.0"} or host.endswith(".local"):
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified:
+            return True
+        return ip in ipaddress.ip_network("100.64.0.0/10")
 
     def get_generation_backend_config_error(self) -> Optional[GenerationError]:
         """Return a structured backend config error, if the backend cannot run."""
@@ -3390,9 +3554,12 @@ class GeminiAnalyzer:
         
         # 优先从上下文获取股票名称（由 main.py 传入）
         name = context.get('stock_name')
-        if not name or name.startswith('股票'):
+        if _is_placeholder_analysis_name(name, code):
+            mapped_name = STOCK_NAME_MAP.get(code)
+            if mapped_name:
+                name = mapped_name
             # 备选：从 realtime 中获取
-            if 'realtime' in context and context['realtime'].get('name'):
+            elif 'realtime' in context and context['realtime'].get('name'):
                 name = context['realtime']['name']
             else:
                 # 最后从映射表获取
@@ -3531,12 +3698,15 @@ class GeminiAnalyzer:
                 logger.debug(f"=== 完整 Prompt ({len(prompt)}字符) ===\n{prompt}\n=== End Prompt ===")
 
             # 设置生成配置
-            generation_config = {
-                "temperature": config.llm_temperature,
-                "max_output_tokens": 8192,
-            }
+            generation_config = self._analysis_generation_config(config)
+            analysis_stream_enabled = self._analysis_stream_enabled(config)
 
             logger.info(f"[LLM调用] 开始调用 {model_name}...")
+            logger.info(
+                "[LLM配置] max_output_tokens=%s, stream=%s",
+                generation_config.get("max_output_tokens"),
+                analysis_stream_enabled,
+            )
             _emit_progress(68, f"{name}：LLM 已接收请求，等待响应")
 
             # 使用 litellm 调用（支持完整性校验重试）
@@ -3551,7 +3721,7 @@ class GeminiAnalyzer:
                         current_prompt,
                         generation_config,
                         system_prompt=system_prompt,
-                        stream=True,
+                        stream=analysis_stream_enabled,
                         stream_progress_callback=stream_progress_callback,
                         response_validator=self._validate_json_response,
                         audit_context=legacy_audit_context,
@@ -3732,6 +3902,8 @@ class GeminiAnalyzer:
 | 股票代码 | **{code}** |
 | 股票名称 | **{stock_name}** |
 | 分析日期 | {context.get('date', unknown_text)} |
+
+> 标的名称规则：整份 JSON 的 `stock_name`、摘要、操作理由、风险提示和所有说明文字，只能使用「{stock_name}」或「{code}」指代本标的；不要自行翻译、猜测或替换为其他公司名称。
 
 ---
 """
@@ -4128,7 +4300,7 @@ class GeminiAnalyzer:
 - **消息面时间合规**：`latest_news`、`risk_alerts`、`positive_catalysts` 不得包含超出近{news_window_days}日或时间未知的信息
 - **技术面一致性**：严禁把“空头排列”和“多头排列”等互斥结论同时当作有效依据；若基本面/事件面与技术面冲突，必须明确写“事件先行、技术待确认”或“基本面偏多，但技术面尚未确认”
  
-请输出完整的 JSON 格式决策仪表盘。"""
+请只输出一个完整 JSON object，不要输出解释、Markdown 代码块或第二个 JSON。文字字段保持短句，数组最多 2 项，优先保证 JSON 结尾闭合。"""
 
         if report_language == "en":
             prompt += """
@@ -4504,6 +4676,21 @@ class GeminiAnalyzer:
                 logger.warning("无法从响应中提取唯一有效 JSON，标记为解析失败: %s", exc)
                 return self._parse_text_response(response_text, code, name)
 
+            # 优先信任系统传入/映射的标的名称；LLM 不能改写公司身份。
+            ai_stock_name = data.get('stock_name')
+            if ai_stock_name and _is_placeholder_analysis_name(name, code):
+                name = str(ai_stock_name).strip()
+                if report_language == "zh-tw":
+                    name = to_traditional_zh(name)
+            elif ai_stock_name and str(ai_stock_name).strip() != str(name).strip():
+                data = _replace_stock_name_in_payload(
+                    data,
+                    str(ai_stock_name).strip(),
+                    str(name).strip(),
+                )
+                data["stock_name"] = name
+            data = _localize_analysis_payload_strings(data, report_language)
+
             # 提取 dashboard 数据
             dashboard = data.get('dashboard', None)
             guardrail_reason = data.get("guardrail_reason") or data.get("downgrade_reason")
@@ -4515,11 +4702,6 @@ class GeminiAnalyzer:
                 score_calibration.setdefault("guardrail_reason", str(guardrail_reason).strip())
             # 归一化 signal_attribution（LLM 可能返回字符串/负数/总和≠100）
             normalize_report_signal_attribution(dashboard)
-
-            # 优先使用 AI 返回的股票名称（如果原名称无效或包含代码）
-            ai_stock_name = data.get('stock_name')
-            if ai_stock_name and (name.startswith('股票') or name == code or 'Unknown' in name):
-                name = ai_stock_name
 
             # 解析所有字段，使用默认值防止缺失
             # 解析 decision_type，如果没有则根据 operation_advice 推断

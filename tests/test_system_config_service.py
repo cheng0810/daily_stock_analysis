@@ -24,8 +24,48 @@ from src.llm.backend_registry import GENERATION_ONLY_BACKEND_IDS
 from src.services.system_config_service import ConfigConflictError, ConfigImportError, ConfigValidationError, SystemConfigService
 
 
+_RUNTIME_ENV_PREFIXES = (
+    "AGENT_LITELLM_",
+    "ANTHROPIC_",
+    "ANSPIRE_",
+    "DEEPSEEK_",
+    "GEMINI_",
+    "LITELLM_",
+    "LLM_",
+    "OPENAI_",
+)
+_RUNTIME_ENV_KEYS = {
+    "GENERATION_BACKEND",
+    "GENERATION_FALLBACK_BACKEND",
+    "GENERATION_BACKEND_TIMEOUT_SECONDS",
+    "GENERATION_BACKEND_MAX_OUTPUT_BYTES",
+    "GENERATION_BACKEND_MAX_CONCURRENCY",
+    "LOCAL_CLI_BACKEND_MAX_CONCURRENCY",
+    "VISION_MODEL",
+}
+
+
+def _is_runtime_env_key(key: str) -> bool:
+    return key in _RUNTIME_ENV_KEYS or key.startswith(_RUNTIME_ENV_PREFIXES)
+
+
+def _snapshot_and_clear_runtime_env() -> Dict[str, str]:
+    snapshot = {key: value for key, value in os.environ.items() if _is_runtime_env_key(key)}
+    for key in snapshot:
+        os.environ.pop(key, None)
+    return snapshot
+
+
+def _restore_runtime_env(snapshot: Dict[str, str]) -> None:
+    for key in list(os.environ):
+        if _is_runtime_env_key(key):
+            os.environ.pop(key, None)
+    os.environ.update(snapshot)
+
+
 class SystemConfigServiceTestCase(unittest.TestCase):
     def setUp(self) -> None:
+        self._runtime_env_snapshot = _snapshot_and_clear_runtime_env()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.env_path = Path(self.temp_dir.name) / ".env"
         self.env_path.write_text(
@@ -49,6 +89,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         Config.reset_instance()
         os.environ.pop("ENV_FILE", None)
+        _restore_runtime_env(self._runtime_env_snapshot)
         self.temp_dir.cleanup()
 
     def _rewrite_env(self, *lines: str) -> None:
@@ -2258,9 +2299,10 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(agent_arch_schema["validation"]["enum"], ["single", "multi"])
 
         report_language_schema = items["REPORT_LANGUAGE"]["schema"]
-        self.assertEqual(report_language_schema["validation"]["enum"], ["zh", "en", "ko"])
-        self.assertEqual(report_language_schema["options"][1]["value"], "en")
-        self.assertEqual(report_language_schema["options"][2]["value"], "ko")
+        self.assertEqual(report_language_schema["validation"]["enum"], ["zh", "zh-TW", "en", "ko"])
+        self.assertEqual(report_language_schema["options"][1]["value"], "zh-TW")
+        self.assertEqual(report_language_schema["options"][2]["value"], "en")
+        self.assertEqual(report_language_schema["options"][3]["value"], "ko")
 
         self.assertEqual(items["AGENT_ORCHESTRATOR_TIMEOUT_S"]["schema"]["default_value"], "600")
         self.assertTrue(items["AGENT_DEEP_RESEARCH_BUDGET"]["schema"]["is_editable"])

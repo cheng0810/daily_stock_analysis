@@ -646,6 +646,101 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertIn("*分析模型：gemini/gemini-2.5-flash*", out)
 
     @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_summary_only_uses_beginner_zh_tw_format(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        service._report_summary_only = True
+        result = AnalysisResult(
+            code="2345.TW",
+            name="智邦",
+            sentiment_score=55,
+            trend_prediction="震荡",
+            operation_advice="观望",
+            report_language="zh-TW",
+            current_price=2075.0,
+            change_pct=6.14,
+            analysis_summary="等待回踩，不要追高",
+            risk_warning="乖离率偏高，容易回调",
+            dashboard={
+                "core_conclusion": {
+                    "one_sentence": "等待回踩确认，不追高。",
+                },
+                "battle_plan": {
+                    "sniper_points": {
+                        "ideal_buy": "理想买入点：靠近MA10再分批",
+                        "stop_loss": "止损位：跌破MA20减仓",
+                    },
+                },
+                "intelligence": {
+                    "latest_news": "近3日无重大新闻，市场焦点集中在技术面。",
+                    "risk_alerts": ["短线涨多，回调风险升高"],
+                },
+            },
+        )
+
+        out = service.generate_dashboard_report([result], report_date="2026-10-05")
+
+        self.assertIn("新手版重點", out)
+        self.assertIn("智邦(2345.TW)", out)
+        self.assertIn("觀望，分數 55，震盪，現價 2,075 元（+6.14%）", out)
+        self.assertIn("消息面", out)
+        self.assertIn("近3日無重大新聞，市場焦點集中在技術面。", out)
+        self.assertIn("買/加碼", out)
+        self.assertIn("賣/減碼", out)
+        self.assertIn("風險", out)
+        self.assertIn("理想買點", out)
+        self.assertNotIn("理想买入点", out)
+
+    @mock.patch("src.notification.get_config")
+    def test_generate_dashboard_summary_only_localizes_english_stability_guardrail_zh_tw(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(report_renderer_enabled=False)
+        service = NotificationService()
+        service._report_summary_only = True
+        result = AnalysisResult(
+            code="2317.TW",
+            name="鴻海",
+            sentiment_score=59,
+            trend_prediction="bullish",
+            operation_advice="Hold and watch",
+            report_language="zh-TW",
+            current_price=254.0,
+            change_pct=0.99,
+            analysis_summary=(
+                "Hold and watch: Capital flow source unsupported; the buy call "
+                "lacks capital-flow confirmation, so treat it as watch-only."
+            ),
+            risk_warning="风险点1：RSI超买，短线回调风险升高",
+            dashboard={
+                "core_conclusion": {
+                    "one_sentence": (
+                        "Hold and watch: Capital flow source unsupported; the buy call "
+                        "lacks capital-flow confirmation, so treat it as watch-only."
+                    ),
+                },
+                "intelligence": {
+                    "latest_news": "9月营收1.15兆元，单月首度破兆。",
+                    "risk_alerts": ["风险点1：RSI超买，短线回调风险升高"],
+                },
+            },
+        )
+
+        out = service.generate_dashboard_report([result], report_date="2026-10-05")
+
+        self.assertIn("鴻海(2317.TW)", out)
+        self.assertIn("持有觀察，分數 59，看多，現價 254 元（+0.99%）", out)
+        self.assertIn("消息面：9月營收1.15兆元，單月首度破兆。", out)
+        self.assertIn("資金流來源暫不支援", out)
+        self.assertIn("風險點1：RSI超買，短線回檔風險升高", out)
+        self.assertNotIn("Hold and watch", out)
+        self.assertNotIn("Capital flow source unsupported", out)
+        self.assertNotIn("风险", out)
+        self.assertNotIn("回调", out)
+
+    @mock.patch("src.notification.get_config")
     def test_generate_dashboard_report_shows_phase_decision_in_default_renderer(
         self, mock_get_config: mock.MagicMock
     ):

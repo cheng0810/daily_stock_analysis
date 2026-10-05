@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] 修复桌面端 `WEBUI_HOST=*` / `WEBUI_HOST=[::]` 会被原样传给端口探测和后端启动导致无法监听的问题，启动前分别规范化为 `0.0.0.0` / `::`。
 - [改进] `STOCK_LIST` 自选股解析支持中文逗号、顿号、分号、空格和换行等常见粘贴分隔符，运行时、定时热刷新、CLI `--stocks`、Web 设置保存和自选 API 统一识别，并在写回时规范为英文逗号。
 - [改进] 新增 `NEWS_INTEL_AUTO_FETCH_ENABLED` 单开关，开启后个股分析、Agent 分析和大盘复盘会 fail-open 自动初始化并刷新 RSS/Atom/NewsNow 本地资讯池。
+- [改进] 新增 Yahoo Finance RSS 股票新闻兜底，并为单股分析新增 `ANALYSIS_LLM_MAX_TOKENS` 与 `ANALYSIS_LLM_STREAM_ENABLED`，降低本地 OpenAI-compatible 模型输出 JSON 被截断或 stream 不兼容的概率。
+- [改进] 报告输出新增 `REPORT_LANGUAGE=zh-TW` 繁体中文模式，并为台股常用标的补充中文名称映射，避免 Yahoo Finance 英文名或 LLM 错名污染报告。
+- [改进] `REPORT_SUMMARY_ONLY=true` 改为新手版摘要，保留每档建议、现价、消息面、买/加码点、卖/减码点和风险说明，同时隐藏完整技术细节。
+- [新功能] 新增多使用者每日分析必跑股票清单，自动任务会合并使用者持股/观察股、Portfolio 非零持仓与 `STOCK_LIST`，再从台股科技/ETF 候选池补足最多 15 档。
+- [改进] Web 持仓页新增每日分析清单管理与候选股票卡片，卡片包含必跑/候选来源、观察分数、最新收盘与近日日线迷你 K 线。
+- [测试] 新增每日分析 universe 服务与 Web 持仓页每日分析清单测试，覆盖必跑股不被 15 档上限丢弃、台股代码标准化和新增自订股票流程。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->

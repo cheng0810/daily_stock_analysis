@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Literal, Optional, TypedDict, get_args
 
-from src.report_language import normalize_report_language
+from src.report_language import normalize_report_language, to_traditional_zh
 from src.schemas.decision_scale import action_for_score, score_action_conflicts_without_guardrail
 
 DecisionAction = Literal["buy", "add", "hold", "reduce", "sell", "watch", "avoid", "alert"]
@@ -358,7 +358,10 @@ def localize_action_label(action: Any, language: Optional[str] = "zh") -> Option
     normalized = _explicit_action(action)
     if not normalized:
         return None
-    return _ACTION_LABELS[normalized][normalize_report_language(language)]
+    normalized_language = normalize_report_language(language)
+    lookup_language = "zh" if normalized_language == "zh-tw" else normalized_language
+    value = _ACTION_LABELS[normalized][lookup_language]
+    return to_traditional_zh(value) if normalized_language == "zh-tw" else value
 
 
 def build_action_fields(
