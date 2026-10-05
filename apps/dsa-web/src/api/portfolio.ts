@@ -2,6 +2,11 @@ import apiClient from './index';
 import { toCamelCase } from './utils';
 import type { TaskAccepted } from '../types/analysis';
 import type {
+  DailyAnalysisUniverseResponse,
+  DailyAnalysisUserListResponse,
+  DailyAnalysisUserStockItem,
+  DailyAnalysisUserStockListResponse,
+  DailyAnalysisUserStockUpsertRequest,
   PortfolioAccountItem,
   PortfolioAccountCreateRequest,
   PortfolioAccountListResponse,
@@ -127,6 +132,52 @@ export const portfolioApi = {
   async deleteAccount(accountId: number): Promise<PortfolioDeleteResponse> {
     const response = await apiClient.delete<Record<string, unknown>>(`/api/v1/portfolio/accounts/${accountId}`);
     return toCamelCase<PortfolioDeleteResponse>(response.data);
+  },
+
+  async getDailyAnalysisUsers(includeInactive = false): Promise<DailyAnalysisUserListResponse> {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/portfolio/daily-analysis/users', {
+      params: { include_inactive: includeInactive },
+    });
+    return toCamelCase<DailyAnalysisUserListResponse>(response.data);
+  },
+
+  async getDailyAnalysisStocks(userKey?: string): Promise<DailyAnalysisUserStockListResponse> {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/portfolio/daily-analysis/stocks', {
+      params: userKey ? { user_key: userKey } : undefined,
+    });
+    return toCamelCase<DailyAnalysisUserStockListResponse>(response.data);
+  },
+
+  async upsertDailyAnalysisStock(
+    payload: DailyAnalysisUserStockUpsertRequest,
+  ): Promise<DailyAnalysisUserStockItem> {
+    const response = await apiClient.post<Record<string, unknown>>('/api/v1/portfolio/daily-analysis/stocks', {
+      user_key: payload.userKey,
+      symbol: payload.symbol,
+      relation_type: payload.relationType,
+      stock_name: payload.stockName,
+      market: payload.market ?? 'tw',
+      shares: payload.shares,
+      avg_cost: payload.avgCost,
+      buy_date: payload.buyDate,
+      note: payload.note,
+      display_name: payload.displayName,
+      email: payload.email,
+      daily_email_enabled: payload.dailyEmailEnabled ?? true,
+    });
+    return toCamelCase<DailyAnalysisUserStockItem>(response.data);
+  },
+
+  async deleteDailyAnalysisStock(stockId: number): Promise<PortfolioDeleteResponse> {
+    const response = await apiClient.delete<Record<string, unknown>>(
+      `/api/v1/portfolio/daily-analysis/stocks/${stockId}`,
+    );
+    return toCamelCase<PortfolioDeleteResponse>(response.data);
+  },
+
+  async getDailyAnalysisUniverse(): Promise<DailyAnalysisUniverseResponse> {
+    const response = await apiClient.get<Record<string, unknown>>('/api/v1/portfolio/daily-analysis/universe');
+    return toCamelCase<DailyAnalysisUniverseResponse>(response.data);
   },
 
   async getSnapshot(query: SnapshotQuery = {}): Promise<PortfolioSnapshotResponse> {

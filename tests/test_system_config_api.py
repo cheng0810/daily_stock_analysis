@@ -35,10 +35,50 @@ from src.core.config_manager import ConfigManager
 from src.services.system_config_service import SystemConfigService
 
 
+_RUNTIME_ENV_PREFIXES = (
+    "AGENT_LITELLM_",
+    "ANTHROPIC_",
+    "ANSPIRE_",
+    "DEEPSEEK_",
+    "GEMINI_",
+    "LITELLM_",
+    "LLM_",
+    "OPENAI_",
+)
+_RUNTIME_ENV_KEYS = {
+    "GENERATION_BACKEND",
+    "GENERATION_FALLBACK_BACKEND",
+    "GENERATION_BACKEND_TIMEOUT_SECONDS",
+    "GENERATION_BACKEND_MAX_OUTPUT_BYTES",
+    "GENERATION_BACKEND_MAX_CONCURRENCY",
+    "LOCAL_CLI_BACKEND_MAX_CONCURRENCY",
+    "VISION_MODEL",
+}
+
+
+def _is_runtime_env_key(key: str) -> bool:
+    return key in _RUNTIME_ENV_KEYS or key.startswith(_RUNTIME_ENV_PREFIXES)
+
+
+def _snapshot_and_clear_runtime_env() -> dict[str, str]:
+    snapshot = {key: value for key, value in os.environ.items() if _is_runtime_env_key(key)}
+    for key in snapshot:
+        os.environ.pop(key, None)
+    return snapshot
+
+
+def _restore_runtime_env(snapshot: dict[str, str]) -> None:
+    for key in list(os.environ):
+        if _is_runtime_env_key(key):
+            os.environ.pop(key, None)
+    os.environ.update(snapshot)
+
+
 class SystemConfigApiTestCase(unittest.TestCase):
     """System config API tests in isolation without loading the full app."""
 
     def setUp(self) -> None:
+        self._runtime_env_snapshot = _snapshot_and_clear_runtime_env()
         auth._auth_enabled = None
         auth._session_secret = None
         auth._password_hash_salt = None
@@ -83,6 +123,7 @@ class SystemConfigApiTestCase(unittest.TestCase):
             os.environ.pop("DATABASE_PATH", None)
         else:
             os.environ["DATABASE_PATH"] = self._orig_database_path
+        _restore_runtime_env(self._runtime_env_snapshot)
         self.temp_dir.cleanup()
 
     @staticmethod

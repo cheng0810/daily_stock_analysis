@@ -17,6 +17,7 @@ A股自选股智能分析系统 - 通知层
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -50,10 +51,12 @@ from src.report_language import (
     localize_strategy_skill,
     localize_strategy_conflict_description,
     localize_strategy_synthesis_summary,
+    localize_operation_advice,
     localize_trend_prediction,
     normalize_report_language,
     normalize_strategy_synthesis_payload,
     strategy_invalid_opinion_count,
+    to_traditional_zh,
 )
 from src.schemas.decision_action import (
     display_action_fields_for_result,
@@ -370,6 +373,256 @@ class NotificationService(
         return self._escape_md(
             get_localized_stock_name(result.name, result.code, report_language)
         )
+
+    def _report_text(
+        self,
+        value: Any,
+        report_language: str,
+        *,
+        max_chars: int = 120,
+    ) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if report_language == "zh-tw":
+            text = to_traditional_zh(text)
+        if max_chars > 0 and len(text) > max_chars:
+            return text[: max_chars - 1].rstrip() + "…"
+        return text
+
+    def _first_report_text(
+        self,
+        values: List[Any],
+        report_language: str,
+        *,
+        fallback: str,
+        max_chars: int = 120,
+    ) -> str:
+        for value in values:
+            if isinstance(value, list):
+                for item in value:
+                    text = self._report_text(item, report_language, max_chars=max_chars)
+                    if text:
+                        return text
+                continue
+            text = self._report_text(value, report_language, max_chars=max_chars)
+            if text:
+                return text
+        return self._report_text(fallback, report_language, max_chars=max_chars)
+
+    @staticmethod
+    def _coerce_report_number(value: Any) -> Optional[float]:
+        if value in (None, ""):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _format_report_number(value: float) -> str:
+        return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+    def _beginner_price_summary(self, result: AnalysisResult, report_language: str) -> str:
+        dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
+        data_perspective = dashboard.get("data_perspective", {}) if isinstance(dashboard, dict) else {}
+        price_position = (
+            data_perspective.get("price_position", {})
+            if isinstance(data_perspective, dict)
+            else {}
+        )
+        snapshot = result.market_snapshot if isinstance(result.market_snapshot, dict) else {}
+
+        price = self._coerce_report_number(getattr(result, "current_price", None))
+        if price is None and isinstance(price_position, dict):
+            price = self._coerce_report_number(price_position.get("current_price"))
+        if price is None:
+            price = self._coerce_report_number(snapshot.get("price"))
+        if price is None:
+            return ""
+
+        change_pct = self._coerce_report_number(getattr(result, "change_pct", None))
+        if change_pct is None:
+            change_pct = self._coerce_report_number(snapshot.get("change_pct"))
+
+        price_text = self._format_report_number(price)
+        if report_language == "en":
+            summary = f"Price {price_text}"
+        else:
+            summary = f"{'現價' if report_language == 'zh-tw' else '现价'} {price_text} 元"
+
+        if change_pct is not None:
+            change_text = f"{change_pct:+.2f}%"
+            wrapper = f"({change_text})" if report_language == "en" else f"（{change_text}）"
+            summary = f"{summary}{wrapper}"
+        return summary
+
+    def _append_beginner_summary_lines(
+        self,
+        report_lines: List[str],
+        sorted_results: List[AnalysisResult],
+        report_language: str,
+        labels: Dict[str, str],
+    ) -> None:
+        if report_language == "zh-tw":
+            heading = "新手版重點"
+            intro = "先看結論：每天先看建議和價位，不需要盯盤追高。買/加碼點、賣/減碼點與風險都列在下面。"
+            group_titles = {
+                "buy": "可留意買點",
+                "hold": "持有 / 先觀望",
+                "sell": "要降風險",
+            }
+            fallback_buy = "沒有明確低風險買點，等回到支撐附近或有效突破再評估。"
+            fallback_sell = "跌破停損位、關鍵支撐，或風險明顯放大時減碼。"
+            fallback_risk = "資料或資金流證據不足，先降低追價衝動。"
+            fallback_news = "近 3 日沒有可用重大消息，主要看技術面與價位。"
+            buy_label = "買/加碼"
+            sell_label = "賣/減碼"
+            risk_label = "風險"
+            reason_label = "白話理由"
+            news_label = "消息面"
+        elif report_language == "en":
+            heading = "Beginner Summary"
+            intro = "Start here: focus on action, entry/exit levels, and risk before reading the full technical detail."
+            group_titles = {
+                "buy": "Watch for Entries",
+                "hold": "Hold / Watch",
+                "sell": "Reduce Risk",
+            }
+            fallback_buy = "No clear low-risk entry; wait for support confirmation or a valid breakout."
+            fallback_sell = "Reduce if stop-loss/support fails or risk expands."
+            fallback_risk = "Data or capital-flow evidence is insufficient; avoid chasing."
+            fallback_news = "No major recent news found; focus on price action and risk levels."
+            buy_label = "Buy/Add"
+            sell_label = "Sell/Reduce"
+            risk_label = "Risk"
+            reason_label = "Plain Reason"
+            news_label = "News"
+        else:
+            heading = "新手版重点"
+            intro = "先看结论：每天先看建议和价位，不需要盯盘追高。买/加仓点、卖/减仓点与风险都列在下面。"
+            group_titles = {
+                "buy": "可留意买点",
+                "hold": "持有 / 先观望",
+                "sell": "要降风险",
+            }
+            fallback_buy = "没有明确低风险买点，等回到支撑附近或有效突破再评估。"
+            fallback_sell = "跌破止损位、关键支撑，或风险明显放大时减仓。"
+            fallback_risk = "资料或资金流证据不足，先降低追价冲动。"
+            fallback_news = "近 3 日没有可用重大消息，主要看技术面与价位。"
+            buy_label = "买/加仓"
+            sell_label = "卖/减仓"
+            risk_label = "风险"
+            reason_label = "白话理由"
+            news_label = "消息面"
+
+        grouped: Dict[str, List[AnalysisResult]] = {"buy": [], "hold": [], "sell": []}
+        for result in sorted_results:
+            _, _emoji, signal_tag = self._get_signal_level(result)
+            key = "buy" if signal_tag in {"strong_buy", "buy"} else "sell" if signal_tag in {"reduce", "sell"} else "hold"
+            grouped[key].append(result)
+
+        report_lines.extend([f"## {heading}", "", f"> {intro}", ""])
+        for group_key in ("buy", "hold", "sell"):
+            group_results = grouped[group_key]
+            if not group_results:
+                continue
+            report_lines.extend([f"### {group_titles[group_key]}", ""])
+            for result in group_results:
+                signal_text, emoji, _ = self._get_signal_level(result)
+                display_name = self._get_display_name(result, report_language)
+                dashboard = result.dashboard if isinstance(result.dashboard, dict) else {}
+                core = dashboard.get("core_conclusion", {}) if isinstance(dashboard, dict) else {}
+                battle = dashboard.get("battle_plan", {}) if isinstance(dashboard, dict) else {}
+                sniper = battle.get("sniper_points", {}) if isinstance(battle, dict) else {}
+                intel = dashboard.get("intelligence", {}) if isinstance(dashboard, dict) else {}
+                risks = intel.get("risk_alerts", []) if isinstance(intel, dict) else []
+
+                reason = self._first_report_text(
+                    [
+                        core.get("one_sentence") if isinstance(core, dict) else "",
+                        getattr(result, "buy_reason", ""),
+                        getattr(result, "analysis_summary", ""),
+                    ],
+                    report_language,
+                    fallback=localize_operation_advice(result.operation_advice, report_language),
+                    max_chars=110,
+                )
+                buy_point = self._first_report_text(
+                    [
+                        sniper.get("ideal_buy") if isinstance(sniper, dict) else "",
+                        sniper.get("secondary_buy") if isinstance(sniper, dict) else "",
+                    ],
+                    report_language,
+                    fallback=fallback_buy,
+                    max_chars=110,
+                )
+                sell_point = self._first_report_text(
+                    [
+                        sniper.get("stop_loss") if isinstance(sniper, dict) else "",
+                    ],
+                    report_language,
+                    fallback=fallback_sell,
+                    max_chars=110,
+                )
+                news = self._first_report_text(
+                    [
+                        intel.get("latest_news") if isinstance(intel, dict) else "",
+                        getattr(result, "news_summary", ""),
+                        intel.get("sentiment_summary") if isinstance(intel, dict) else "",
+                        getattr(result, "market_sentiment", ""),
+                        getattr(result, "hot_topics", ""),
+                    ],
+                    report_language,
+                    fallback=fallback_news,
+                    max_chars=125,
+                )
+                risk = self._first_report_text(
+                    [
+                        risks if isinstance(risks, list) else "",
+                        getattr(result, "risk_warning", ""),
+                        getattr(result, "guardrail_reason", ""),
+                    ],
+                    report_language,
+                    fallback=fallback_risk,
+                    max_chars=110,
+                )
+                action_text = (
+                    localize_operation_advice(result.operation_advice, report_language)
+                    if report_language == "zh-tw"
+                    else signal_text
+                )
+                summary_parts = [
+                    action_text,
+                    f"{labels['score_label']} {result.sentiment_score}",
+                    localize_trend_prediction(result.trend_prediction, report_language),
+                ]
+                price_summary = self._beginner_price_summary(result, report_language)
+                if price_summary:
+                    summary_parts.append(price_summary)
+                if report_language == "en":
+                    report_lines.extend([
+                        f"- {emoji} **{display_name}({result.code})**: "
+                        f"{' | '.join(summary_parts)}.",
+                        f"  - {reason_label}: {reason}",
+                        f"  - {news_label}: {news}",
+                        f"  - {buy_label}: {buy_point}",
+                        f"  - {sell_label}: {sell_point}",
+                        f"  - {risk_label}: {risk}",
+                    ])
+                else:
+                    report_lines.extend([
+                        f"- {emoji} **{display_name}({result.code})**："
+                        f"{'，'.join(summary_parts)}。",
+                        f"  - {reason_label}：{reason}",
+                        f"  - {news_label}：{news}",
+                        f"  - {buy_label}：{buy_point}",
+                        f"  - {sell_label}：{sell_point}",
+                        f"  - {risk_label}：{risk}",
+                    ])
+                news_disclosure = self._empty_news_disclosure(result, report_language)
+                if news_disclosure:
+                    report_lines.append(f"  - {news_disclosure}")
+                self._append_data_sources_line(report_lines, result, labels)
+            report_lines.append("")
 
     def _get_history_compare_context(self, results: List[AnalysisResult]) -> Dict[str, Any]:
         """Fetch and cache history comparison data for markdown rendering."""
@@ -956,17 +1209,12 @@ class NotificationService(
         # Issue #262: summary_only 时仅输出摘要，跳过个股详情
         if self._report_summary_only:
             report_lines.extend([f"## 📊 {labels['summary_heading']}", ""])
-            for r in sorted_results:
-                signal_text, emoji, _ = self._get_signal_level(r)
-                report_lines.append(
-                    f"{emoji} **{self._get_display_name(r, report_language)}({r.code})**: "
-                    f"{signal_text} | "
-                    f"{labels['score_label']} {r.sentiment_score} | "
-                    f"{localize_trend_prediction(r.trend_prediction, report_language)}"
-                )
-                news_disclosure = self._empty_news_disclosure(r, report_language)
-                if news_disclosure:
-                    report_lines.append(news_disclosure)
+            self._append_beginner_summary_lines(
+                report_lines,
+                sorted_results,
+                report_language,
+                labels,
+            )
         else:
             report_lines.extend([f"## 📈 {labels['report_title']}", ""])
             # 逐个股票的详细分析
@@ -1323,20 +1571,23 @@ class NotificationService(
                 f"## 📊 {labels['summary_heading']}",
                 "",
             ])
-            for r in sorted_results:
-                signal_text, signal_emoji, _ = self._get_signal_level(r)
-                display_name = self._get_display_name(r, report_language)
-                report_lines.append(
-                    f"{signal_emoji} **{display_name}({r.code})**: "
-                    f"{signal_text} | "
-                    f"{labels['score_label']} {r.sentiment_score} | "
-                    f"{localize_trend_prediction(r.trend_prediction, report_language)}"
+            if self._report_summary_only:
+                self._append_beginner_summary_lines(
+                    report_lines,
+                    sorted_results,
+                    report_language,
+                    labels,
                 )
-                if self._report_summary_only:
-                    news_disclosure = self._empty_news_disclosure(r, report_language)
-                    if news_disclosure:
-                        report_lines.append(news_disclosure)
-                    self._append_data_sources_line(report_lines, r, labels)
+            else:
+                for r in sorted_results:
+                    signal_text, signal_emoji, _ = self._get_signal_level(r)
+                    display_name = self._get_display_name(r, report_language)
+                    report_lines.append(
+                        f"{signal_emoji} **{display_name}({r.code})**: "
+                        f"{signal_text} | "
+                        f"{labels['score_label']} {r.sentiment_score} | "
+                        f"{localize_trend_prediction(r.trend_prediction, report_language)}"
+                    )
             report_lines.extend([
                 "",
                 "---",
@@ -1933,22 +2184,12 @@ class NotificationService(
             f"> {len(results)} {labels['stock_unit_compact']} | 🟢{buy_count} 🟡{hold_count} 🔴{sell_count}",
         ]
         self._append_market_status_line(lines, results, report_language)
-        for r in sorted_results:
-            signal_text, emoji, _ = self._get_signal_level(r)
-            name = self._get_display_name(r, report_language)
-            dash = r.dashboard or {}
-            core = dash.get('core_conclusion', {}) or {}
-            one = (core.get('one_sentence') or r.analysis_summary or '')[:60]
-            lines.append(
-                f"**{name}({r.code})** {emoji} "
-                f"{signal_text} | "
-                f"{labels['score_label']} {r.sentiment_score} | {one}"
-            )
-            news_disclosure = self._empty_news_disclosure(r, report_language)
-            if news_disclosure:
-                lines.append(news_disclosure)
-            if self._append_data_sources_line(lines, r, labels):
-                lines.append("")
+        self._append_beginner_summary_lines(
+            lines,
+            sorted_results,
+            report_language,
+            labels,
+        )
         lines.append("")
         lines.append(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
         models = self._collect_models_used(results)
@@ -2137,7 +2378,10 @@ class NotificationService(
         mapping = self._SOURCE_DISPLAY_NAMES.get(raw_source)
         if not mapping:
             return raw_source
-        return mapping[normalize_report_language(language)]
+        report_language = normalize_report_language(language)
+        lookup_language = "zh" if report_language == "zh-tw" else report_language
+        value = mapping[lookup_language]
+        return to_traditional_zh(value) if report_language == "zh-tw" else value
 
     def _append_market_snapshot(self, lines: List[str], result: AnalysisResult) -> None:
         snapshot = getattr(result, 'market_snapshot', None)

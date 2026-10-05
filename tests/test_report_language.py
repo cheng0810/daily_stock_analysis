@@ -135,6 +135,31 @@ class KoreanReportLanguageTestCase(unittest.TestCase):
         self.assertEqual(get_sentiment_label(80, "en"), "Very Bullish")
         self.assertEqual(get_sentiment_label(40, "zh"), "中性")
 
+
+class TraditionalChineseReportLanguageTestCase(unittest.TestCase):
+    def test_traditional_chinese_aliases_and_labels(self) -> None:
+        self.assertIn("zh-tw", SUPPORTED_REPORT_LANGUAGES)
+        self.assertEqual(normalize_report_language("zh-TW"), "zh-tw")
+        self.assertEqual(normalize_report_language("繁體中文"), "zh-tw")
+
+        labels = get_report_labels("zh-TW")
+        self.assertEqual(labels["dashboard_title"], "決策儀表板")
+        self.assertEqual(labels["stock_unit_compact"], "檔")
+        self.assertEqual(labels["risk_alerts_label"], "風險警報")
+
+    def test_traditional_chinese_decision_terms(self) -> None:
+        self.assertEqual(localize_operation_advice("减仓", "zh-TW"), "減碼")
+        self.assertEqual(localize_operation_advice("买入", "zh-TW"), "買入")
+        self.assertEqual(localize_trend_prediction("弱势空头", "zh-TW"), "弱勢空頭")
+        self.assertEqual(get_signal_level("", 38, "zh-TW"), ("減碼", "🟠", "reduce"))
+        self.assertEqual(get_sentiment_label(80, "zh-TW"), "極度樂觀")
+
+    def test_traditional_chinese_stock_placeholder(self) -> None:
+        self.assertEqual(
+            get_localized_stock_name("股票2330.TW", "2330.TW", "zh-TW"),
+            "待確認股票",
+        )
+
     def test_korean_advice_canonicalizes_to_decision_type(self) -> None:
         self.assertEqual(infer_decision_type_from_advice("매수"), "buy")
         self.assertEqual(infer_decision_type_from_advice("매도"), "sell")

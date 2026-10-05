@@ -28,6 +28,12 @@ const {
   createAccount,
   deleteAccount,
   analyzePosition,
+  getDailyAnalysisUsers,
+  getDailyAnalysisStocks,
+  upsertDailyAnalysisStock,
+  deleteDailyAnalysisStock,
+  getDailyAnalysisUniverse,
+  getStockHistory,
   listDecisionSignals,
   getLatestDecisionSignals,
 } = vi.hoisted(() => ({
@@ -50,6 +56,12 @@ const {
   createAccount: vi.fn(),
   deleteAccount: vi.fn(),
   analyzePosition: vi.fn(),
+  getDailyAnalysisUsers: vi.fn(),
+  getDailyAnalysisStocks: vi.fn(),
+  upsertDailyAnalysisStock: vi.fn(),
+  deleteDailyAnalysisStock: vi.fn(),
+  getDailyAnalysisUniverse: vi.fn(),
+  getStockHistory: vi.fn(),
   listDecisionSignals: vi.fn(),
   getLatestDecisionSignals: vi.fn(),
 }));
@@ -82,6 +94,17 @@ vi.mock('../../api/portfolio', () => ({
     createAccount,
     deleteAccount,
     analyzePosition,
+    getDailyAnalysisUsers,
+    getDailyAnalysisStocks,
+    upsertDailyAnalysisStock,
+    deleteDailyAnalysisStock,
+    getDailyAnalysisUniverse,
+  },
+}));
+
+vi.mock('../../api/stocks', () => ({
+  stocksApi: {
+    getHistory: getStockHistory,
   },
 }));
 
@@ -333,6 +356,30 @@ describe('PortfolioPage FX refresh', () => {
       message: '分析任务已加入队列: HK00700',
       analysisPhase: 'auto',
     });
+    getDailyAnalysisUsers.mockResolvedValue({ users: [] });
+    getDailyAnalysisStocks.mockResolvedValue({ items: [] });
+    upsertDailyAnalysisStock.mockResolvedValue({
+      id: 1,
+      userId: 1,
+      userKey: 'default',
+      dailyEmailEnabled: true,
+      symbol: '2376.TW',
+      market: 'tw',
+      relationType: 'holding',
+      enabled: true,
+    });
+    deleteDailyAnalysisStock.mockResolvedValue({ deleted: 1 });
+    getDailyAnalysisUniverse.mockResolvedValue({
+      symbols: [],
+      items: [],
+      requiredCount: 0,
+      candidateCount: 0,
+      minStocks: 10,
+      maxStocks: 15,
+      watchScoreThreshold: 60,
+      truncatedCandidateCount: 0,
+    });
+    getStockHistory.mockResolvedValue({ stockCode: '2376.TW', period: 'daily', data: [] });
     getLatestDecisionSignals.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 1 });
   });
 
@@ -352,6 +399,75 @@ describe('PortfolioPage FX refresh', () => {
 
     expect(getSnapshot).toHaveBeenCalledWith({ accountId: undefined, costMethod: 'fifo', includeRealtime: false });
     expect(getRisk).toHaveBeenCalledWith({ accountId: undefined, costMethod: 'fifo', includeRealtime: false });
+  });
+
+  it('renders daily analysis universe cards and submits a user required stock', async () => {
+    getDailyAnalysisUsers.mockResolvedValueOnce({
+      users: [{ id: 1, userKey: 'andy', dailyEmailEnabled: true, isActive: true }],
+    });
+    getDailyAnalysisStocks.mockResolvedValueOnce({
+      items: [
+        {
+          id: 7,
+          userId: 1,
+          userKey: 'andy',
+          dailyEmailEnabled: true,
+          symbol: '2376.TW',
+          market: 'tw',
+          relationType: 'holding',
+          shares: 10,
+          avgCost: 250,
+          enabled: true,
+        },
+      ],
+    });
+    getDailyAnalysisUniverse.mockResolvedValueOnce({
+      symbols: ['2376.TW'],
+      items: [
+        {
+          symbol: '2376.TW',
+          stockName: '技嘉',
+          market: 'tw',
+          required: true,
+          source: 'user_holding',
+          watchScore: 100,
+          reason: '使用者設定每日必跑',
+        },
+      ],
+      requiredCount: 1,
+      candidateCount: 0,
+      minStocks: 10,
+      maxStocks: 15,
+      watchScoreThreshold: 60,
+      truncatedCandidateCount: 0,
+    });
+    getStockHistory.mockResolvedValueOnce({
+      stockCode: '2376.TW',
+      period: 'daily',
+      data: [
+        { date: '2026-10-01', close: 100 },
+        { date: '2026-10-02', close: 102 },
+      ],
+    });
+
+    render(<PortfolioPage />);
+
+    expect(await screen.findByText('每日分析清單')).toBeInTheDocument();
+    expect(await screen.findByText('技嘉')).toBeInTheDocument();
+    expect(await screen.findByText('收盤 102')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('使用者'), { target: { value: 'andy' } });
+    fireEvent.change(screen.getByPlaceholderText('Email（選填）'), { target: { value: 'andy@example.com' } });
+    fireEvent.change(screen.getByPlaceholderText('台股代碼，例如 2376'), { target: { value: '0050' } });
+    fireEvent.click(screen.getByTitle('加入每日分析'));
+
+    await waitFor(() => expect(upsertDailyAnalysisStock).toHaveBeenCalledWith(expect.objectContaining({
+      userKey: 'andy',
+      email: 'andy@example.com',
+      symbol: '0050',
+      relationType: 'holding',
+      market: 'tw',
+    })));
   });
 
   it('renders stale FX status with a manual refresh button', async () => {

@@ -107,6 +107,29 @@ STOCK_NAME_MAP = {
     "01299": "友邦保险",
     "00941": "中国移动",
     "00883": "中国海洋石油",
+    # === Taiwan stocks / ETFs (Yahoo Finance suffix .TW) ===
+    "0050": "元大台灣50",
+    "0050.TW": "元大台灣50",
+    "2330": "台積電",
+    "2330.TW": "台積電",
+    "2317": "鴻海",
+    "2317.TW": "鴻海",
+    "2308": "台達電",
+    "2308.TW": "台達電",
+    "2454": "聯發科",
+    "2454.TW": "聯發科",
+    "2376": "技嘉",
+    "2376.TW": "技嘉",
+    "2382": "廣達",
+    "2382.TW": "廣達",
+    "3231": "緯創",
+    "3231.TW": "緯創",
+    "6669": "緯穎",
+    "6669.TW": "緯穎",
+    "2345": "智邦",
+    "2345.TW": "智邦",
+    "3017": "奇鋐",
+    "3017.TW": "奇鋐",
 }
 
 
@@ -173,6 +196,29 @@ STOCK_ENGLISH_NAME_MAP: Dict[str, Tuple[str, ...]] = {
     "01299": ("AIA Group", "AIA"),
     "00941": ("China Mobile",),
     "00883": ("CNOOC",),
+    # === Taiwan stocks / ETFs ===
+    "0050": ("Yuanta Taiwan 50 ETF", "Taiwan 50"),
+    "0050.TW": ("Yuanta Taiwan 50 ETF", "Taiwan 50"),
+    "2330": ("Taiwan Semiconductor Manufacturing Company", "TSMC"),
+    "2330.TW": ("Taiwan Semiconductor Manufacturing Company", "TSMC"),
+    "2317": ("Hon Hai Precision Industry", "Foxconn"),
+    "2317.TW": ("Hon Hai Precision Industry", "Foxconn"),
+    "2308": ("Delta Electronics",),
+    "2308.TW": ("Delta Electronics",),
+    "2454": ("MediaTek Inc.", "MediaTek"),
+    "2454.TW": ("MediaTek Inc.", "MediaTek"),
+    "2376": ("Gigabyte Technology", "Gigabyte"),
+    "2376.TW": ("Gigabyte Technology", "Gigabyte"),
+    "2382": ("Quanta Computer", "Quanta"),
+    "2382.TW": ("Quanta Computer", "Quanta"),
+    "3231": ("Wistron Corporation", "Wistron"),
+    "3231.TW": ("Wistron Corporation", "Wistron"),
+    "6669": ("Wiwynn Corporation", "Wiwynn"),
+    "6669.TW": ("Wiwynn Corporation", "Wiwynn"),
+    "2345": ("Accton Technology", "Accton"),
+    "2345.TW": ("Accton Technology", "Accton"),
+    "3017": ("Asia Vital Components", "AVC"),
+    "3017.TW": ("Asia Vital Components", "AVC"),
 }
 
 
@@ -211,6 +257,8 @@ def canonicalize_foreign_stock_code(stock_code: str) -> str:
         ``00700``       -> ``00700``
         ``00700.HK``    -> ``00700``
         ``HK00700``     -> ``00700``
+        ``2330.TW``     -> ``2330``
+        ``6505.TWO``    -> ``6505``
 
     A-share codes (``600519``, ``600519.SH``) and unknown forms return the
     uppercased stripped input unchanged. Callers that need to detect
@@ -231,6 +279,10 @@ def canonicalize_foreign_stock_code(stock_code: str) -> str:
     # HK suffix: ``00700.HK``
     if code.endswith(".HK") and code[: -len(".HK")].isdigit():
         return code[: -len(".HK")]
+    # Taiwan Yahoo suffixes: ``2330.TW`` / ``6505.TWO``
+    for suffix in (".TW", ".TWO"):
+        if code.endswith(suffix) and code[: -len(suffix)].isdigit():
+            return code[: -len(suffix)]
     return code
 
 

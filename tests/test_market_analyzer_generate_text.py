@@ -963,6 +963,47 @@ class TestAnalyzerGenerateText:
         assert callable(backend.generate.call_args.kwargs["response_validator"])
         assert backend.generate.call_args.kwargs["audit_context"] == {"call_type": "analysis"}
 
+    def test_analysis_generation_config_uses_configured_token_limit(self):
+        from src.analyzer import GeminiAnalyzer
+
+        cfg = SimpleNamespace(llm_temperature=0.1, analysis_llm_max_tokens=16000)
+
+        generation_config = GeminiAnalyzer._analysis_generation_config(cfg)
+
+        assert generation_config == {"temperature": 0.1, "max_output_tokens": 16000}
+
+    def test_analysis_stream_auto_disables_for_local_openai_channel(self):
+        from src.analyzer import GeminiAnalyzer
+
+        cfg = SimpleNamespace(
+            analysis_llm_stream_enabled=None,
+            litellm_model="openai/qwen3.8-27b",
+            openai_base_url=None,
+            llm_model_list=[
+                {
+                    "model_name": "openai/qwen3.8-27b",
+                    "litellm_params": {
+                        "model": "openai/qwen3.8-27b",
+                        "api_base": "http://100.68.47.105:8001/v1",
+                    },
+                }
+            ],
+        )
+
+        assert GeminiAnalyzer._analysis_stream_enabled(cfg) is False
+
+    def test_analysis_stream_explicit_override_wins_for_local_openai_channel(self):
+        from src.analyzer import GeminiAnalyzer
+
+        cfg = SimpleNamespace(
+            analysis_llm_stream_enabled=True,
+            litellm_model="openai/qwen3.8-27b",
+            openai_base_url="http://127.0.0.1:8001/v1",
+            llm_model_list=[],
+        )
+
+        assert GeminiAnalyzer._analysis_stream_enabled(cfg) is True
+
     def test_call_litellm_wraps_fallback_generation_error_with_primary_context(self):
         from src.llm.generation_backend import GenerationBackend, GenerationError, GenerationErrorCode
 
@@ -2963,6 +3004,47 @@ class TestAnalyzerGenerateText:
         result = GeminiAnalyzer._parse_response(analyzer, valid_response, "600519", "贵州茅台")
         assert result.success is True
         assert result.error_message is None
+
+    def test_parse_response_preserves_system_stock_name_and_zh_tw_text(self):
+        """LLM-invented stock names must not overwrite the system stock identity."""
+        analyzer = self._make_analyzer()
+        analyzer._config_override = SimpleNamespace(report_language="zh-TW")
+
+        from src.analyzer import GeminiAnalyzer
+
+        response = json.dumps({
+            "stock_name": "光宝科",
+            "sentiment_score": 55,
+            "trend_prediction": "震荡",
+            "operation_advice": "观望",
+            "confidence_level": "中",
+            "analysis_summary": "光宝科等待回踩，不要追高。",
+            "buy_reason": "光宝科乖离率偏高，等待确认。",
+            "risk_warning": "光宝科短线涨多，回调风险升高。",
+            "dashboard": {
+                "core_conclusion": {
+                    "one_sentence": "光宝科等待回踩确认。",
+                },
+                "battle_plan": {
+                    "sniper_points": {
+                        "ideal_buy": "理想买入点：回到支撑再分批",
+                        "stop_loss": "止损位：跌破MA20减仓",
+                    },
+                },
+            },
+        }, ensure_ascii=False)
+
+        result = GeminiAnalyzer._parse_response(analyzer, response, "2345.TW", "智邦")
+
+        assert result.success is True
+        assert result.name == "智邦"
+        assert "光宝科" not in result.analysis_summary
+        assert "光宝科" not in result.buy_reason
+        assert "光宝科" not in result.risk_warning
+        assert result.operation_advice == "觀望"
+        assert result.trend_prediction == "震盪"
+        assert result.dashboard["core_conclusion"]["one_sentence"] == "智邦等待回踩確認。"
+        assert "理想買點" in result.dashboard["battle_plan"]["sniper_points"]["ideal_buy"]
 
     def test_json_parse_failure_triggers_fallback_model(self):
         """When the primary model returns non-JSON, _call_litellm must try the fallback model."""

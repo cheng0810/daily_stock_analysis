@@ -42,6 +42,89 @@ class PortfolioAccountListResponse(BaseModel):
     accounts: List[PortfolioAccountItem] = Field(default_factory=list)
 
 
+class DailyAnalysisUserUpsertRequest(BaseModel):
+    user_key: str = Field(..., min_length=1, max_length=64)
+    display_name: Optional[str] = Field(None, max_length=64)
+    email: Optional[str] = Field(None, max_length=255)
+    daily_email_enabled: bool = True
+    is_active: bool = True
+
+
+class DailyAnalysisUserItem(BaseModel):
+    id: int
+    user_key: str
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    daily_email_enabled: bool
+    is_active: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class DailyAnalysisUserListResponse(BaseModel):
+    users: List[DailyAnalysisUserItem] = Field(default_factory=list)
+
+
+class DailyAnalysisUserStockUpsertRequest(BaseModel):
+    user_key: str = Field(..., min_length=1, max_length=64)
+    symbol: str = Field(..., min_length=1, max_length=16)
+    relation_type: Literal["holding", "watch"] = "watch"
+    stock_name: Optional[str] = Field(None, max_length=64)
+    market: Optional[Literal["cn", "hk", "us", "jp", "kr", "tw"]] = "tw"
+    shares: Optional[float] = Field(None, ge=0)
+    avg_cost: Optional[float] = Field(None, ge=0)
+    buy_date: Optional[date] = None
+    note: Optional[str] = Field(None, max_length=255)
+    display_name: Optional[str] = Field(None, max_length=64)
+    email: Optional[str] = Field(None, max_length=255)
+    daily_email_enabled: bool = True
+
+
+class DailyAnalysisUserStockItem(BaseModel):
+    id: int
+    user_id: int
+    user_key: str
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    daily_email_enabled: bool
+    symbol: str
+    stock_name: Optional[str] = None
+    market: str
+    relation_type: str
+    shares: Optional[float] = None
+    avg_cost: Optional[float] = None
+    buy_date: Optional[str] = None
+    note: Optional[str] = None
+    enabled: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class DailyAnalysisUserStockListResponse(BaseModel):
+    items: List[DailyAnalysisUserStockItem] = Field(default_factory=list)
+
+
+class DailyAnalysisUniverseItem(BaseModel):
+    symbol: str
+    stock_name: Optional[str] = None
+    market: str
+    required: bool
+    source: str
+    watch_score: int
+    reason: str
+
+
+class DailyAnalysisUniverseResponse(BaseModel):
+    symbols: List[str] = Field(default_factory=list)
+    items: List[DailyAnalysisUniverseItem] = Field(default_factory=list)
+    required_count: int
+    candidate_count: int
+    min_stocks: int
+    max_stocks: int
+    watch_score_threshold: int
+    truncated_candidate_count: int
+
+
 class PortfolioTradeCreateRequest(BaseModel):
     account_id: int
     symbol: str = Field(..., min_length=1, max_length=16)

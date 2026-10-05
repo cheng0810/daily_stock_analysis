@@ -635,6 +635,34 @@ def _resolve_portfolio_stock_codes(args: argparse.Namespace) -> Optional[List[st
     return stock_codes
 
 
+def _resolve_daily_analysis_stock_codes(config: Config) -> List[str]:
+    """Return the automatic daily universe with STOCK_LIST as a fallback."""
+    fallback_codes = list(getattr(config, "stock_list", []) or [])
+    try:
+        from src.services.daily_analysis_universe import DailyAnalysisUniverseService
+
+        universe = DailyAnalysisUniverseService().build_universe(
+            config_stock_list=fallback_codes,
+        )
+        symbols = list(universe.get("symbols") or [])
+        if not universe.get("required_count") and not fallback_codes:
+            return fallback_codes
+        if not symbols:
+            return fallback_codes
+        logger.info(
+            "每日分析清单已生成: total=%s required=%s candidates=%s threshold=%s max=%s",
+            len(symbols),
+            universe.get("required_count"),
+            universe.get("candidate_count"),
+            universe.get("watch_score_threshold"),
+            universe.get("max_stocks"),
+        )
+        return symbols
+    except Exception as exc:  # noqa: BLE001 - stock universe enrichment must not block the run.
+        logger.warning("每日分析清单生成失败，沿用 STOCK_LIST: %s", exc)
+        return fallback_codes
+
+
 def _prime_daily_market_context(
     config: Config,
     pipeline: Any,
@@ -855,13 +883,17 @@ def run_full_analysis(
             config.refresh_stock_list()
 
         using_config_stock_list = stock_codes is None and portfolio_stock_codes is None
-        effective_codes = stock_codes if stock_codes is not None else config.stock_list
-        # Fail fast on an empty persisted watchlist before trading-day filtering.
-        # Otherwise should_skip=True would mask the configuration error as success.
+        # Issue #373: Trading day filter (per-stock, per-market)
+        if stock_codes is not None:
+            effective_codes = stock_codes
+        elif refresh_watchlist:
+            effective_codes = _resolve_daily_analysis_stock_codes(config)
+        else:
+            effective_codes = list(getattr(config, "stock_list", []) or [])
         if (
             not getattr(args, "dry_run", False)
-            and using_config_stock_list
             and not effective_codes
+            and using_config_stock_list
             and not market_review_requested
         ):
             _LAST_ANALYSIS_FAILURE_REASON = "empty_stock_list"
@@ -869,8 +901,6 @@ def run_full_analysis(
                 "本轮分析未生成报告：STOCK_LIST 为空，且未启用大盘复盘。"
             )
             return _return_with_auto_backtest(False)
-
-        # Issue #373: Trading day filter (per-stock, per-market)
         filtered_codes, effective_region, should_skip = _compute_trading_day_filter(
             config, args, effective_codes
         )

@@ -23,10 +23,11 @@ model_list:
       model: openai/Qwen/Qwen3.5-397B-A17B
       api_key: "os.environ/LITELLM_API_KEY" # 从环境变量读取 Key，安全防泄漏
       api_base: https://api.siliconflow.cn/v1
-      # 以下配置是表示如何启用Qwen模型的enable_thinking开关
+      # Qwen thinking 开关：需要稳定 JSON 输出时建议设为 false；
+      # 若用于普通问答且需要长推理，可按服务端能力改为 true。
       extra_body:
         chat_template_kwargs:
-          enable_thinking: true
+          enable_thinking: false
 
   # --- AIHubmix (OpenAI 兼容，一个 Key 使用多种模型) ---
   - model_name: openai/gpt-4o-mini

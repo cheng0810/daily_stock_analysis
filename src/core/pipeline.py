@@ -30,6 +30,7 @@ from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.base import is_bse_code, normalize_stock_code
 from data_provider.realtime_types import ChipDistribution
+from src.data.stock_mapping import STOCK_NAME_MAP
 from src.analyzer import (
     GeminiAnalyzer,
     AnalysisResult,
@@ -310,6 +311,7 @@ class StockAnalysisPipeline:
                 searxng_base_urls=self.config.searxng_base_urls,
                 searxng_public_instances_enabled=self.config.searxng_public_instances_enabled,
                 searxng_timeout_seconds=getattr(self.config, "searxng_timeout_seconds", None),
+                yahoo_finance_news_enabled=getattr(self.config, "yahoo_finance_news_enabled", True),
                 news_max_age_days=self.config.news_max_age_days,
                 news_strategy_profile=getattr(self.config, "news_strategy_profile", "short"),
             )
@@ -332,6 +334,8 @@ class StockAnalysisPipeline:
             logger.warning("搜索服务未启用（初始化失败或依赖缺失）")
         elif self.search_service.is_available:
             logger.info("搜索服务已启用")
+        elif self._is_stock_news_search_available(self.search_service):
+            logger.info("股票新闻搜索服务已启用")
         else:
             logger.warning("搜索服务未启用（未配置搜索能力）")
 
@@ -350,6 +354,45 @@ class StockAnalysisPipeline:
                 exc_info=True,
             )
             self.social_sentiment_service = None
+
+    @staticmethod
+    def _is_stock_news_search_available(search_service: Any) -> bool:
+        if search_service is None:
+            return False
+        stock_news_available = getattr(search_service, "stock_news_available", None)
+        if isinstance(stock_news_available, bool):
+            return stock_news_available
+        return bool(getattr(search_service, "is_available", False))
+
+    @staticmethod
+    def _prefer_configured_stock_name(
+        code: str,
+        stock_name: Optional[str],
+        report_language: str,
+    ) -> str:
+        """Prefer curated Chinese display names for Chinese reports."""
+        normalized_language = normalize_report_language(report_language)
+        if normalized_language not in {"zh", "zh-tw"}:
+            return stock_name or ""
+
+        raw_code = str(code or "").strip()
+        normalized_code = normalize_stock_code(raw_code) if raw_code else ""
+        candidates = [
+            raw_code,
+            raw_code.upper(),
+            normalized_code,
+            normalized_code.upper() if normalized_code else "",
+        ]
+        if normalized_code and "." not in normalized_code:
+            candidates.extend([
+                f"{normalized_code}.TW",
+                f"{normalized_code}.TWO",
+            ])
+        for candidate in candidates:
+            mapped = STOCK_NAME_MAP.get(candidate)
+            if mapped:
+                return mapped
+        return stock_name or ""
 
     def _emit_progress(self, progress: int, message: str) -> None:
         """Best-effort bridge from pipeline stages to task SSE progress."""
@@ -510,6 +553,7 @@ class StockAnalysisPipeline:
                 stock_name = index_name or analysis_target.display_code or code
             else:
                 stock_name = self.fetcher_manager.get_stock_name(code, allow_realtime=False)
+            stock_name = self._prefer_configured_stock_name(code, stock_name, report_language)
 
             # Step 1: 获取实时行情（量比、换手率等）- 使用统一入口，自动故障切换
             realtime_quote = None
@@ -520,6 +564,7 @@ class StockAnalysisPipeline:
                         # 股票使用实时行情名称；指数保持注册表中文名为权威显示名。
                         if realtime_quote.name and not is_index:
                             stock_name = realtime_quote.name
+                        stock_name = self._prefer_configured_stock_name(code, stock_name, report_language)
                         # 兼容不同数据源的字段（有些数据源可能没有 volume_ratio）
                         volume_ratio = getattr(realtime_quote, 'volume_ratio', None)
                         turnover_rate = getattr(realtime_quote, 'turnover_rate', None)
@@ -687,7 +732,7 @@ class StockAnalysisPipeline:
             )
             news_result_count: Optional[int] = None
             self._emit_progress(46, f"{stock_name}：正在检索新闻与舆情")
-            if self.search_service is not None and self.search_service.is_available:
+            if self._is_stock_news_search_available(self.search_service):
                 logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
 
                 # 检索已发起：此后即使一条都没拿到，也是「执行了但零命中」而非
@@ -1638,8 +1683,7 @@ class StockAnalysisPipeline:
             if result is not None and news_evidence is not None:
                 result.news_result_count = news_evidence.resolve(
                     search_available=bool(
-                        self.search_service is not None
-                        and self.search_service.is_available
+                        self._is_stock_news_search_available(self.search_service)
                     ),
                 )
                 # 与普通路径同样按来源逐个登记：Agent 运行期自己搜到的条数、注入的
@@ -1835,7 +1879,7 @@ class StockAnalysisPipeline:
 
             # 保存新闻情报到数据库（Agent 工具结果仅用于 LLM 上下文，未持久化，Fixes #396）
             # 使用 search_stock_news（与 Agent 工具调用逻辑一致），仅 1 次 API 调用，无额外延迟
-            if self.search_service is not None and self.search_service.is_available:
+            if self._is_stock_news_search_available(self.search_service):
                 try:
                     news_response = self.search_service.search_stock_news(
                         stock_code=("" if is_index else code),

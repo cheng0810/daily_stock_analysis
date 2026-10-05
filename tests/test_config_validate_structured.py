@@ -708,12 +708,21 @@ class TestValidateStructuredNotification:
         )
 
     def test_no_search_engine_is_info(self):
-        cfg = _make_config(searxng_public_instances_enabled=False)
+        cfg = _make_config(
+            searxng_public_instances_enabled=False,
+            yahoo_finance_news_enabled=False,
+        )
         issues = cfg.validate_structured()
         info = [i for i in issues if i.severity == "info"]
         assert any("搜索引擎" in i.message for i in info)
         search_issue = next(i for i in info if "搜索引擎" in i.message)
         assert search_issue.field == "BOCHA_API_KEYS"
+
+    def test_yahoo_finance_news_default_counts_as_search_capability(self):
+        cfg = _make_config(searxng_public_instances_enabled=False)
+        issues = cfg.validate_structured()
+        info = [i for i in issues if i.severity == "info"]
+        assert not any("搜索引擎" in i.message and "未配置" in i.message for i in info)
 
     def test_searxng_configured_no_search_info(self):
         """When searxng_base_urls is configured, no 'unconfigured search engine' info."""

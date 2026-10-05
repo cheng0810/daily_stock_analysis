@@ -1,9 +1,10 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Layers3, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Layers3, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { Pie, PieChart, ResponsiveContainer, Tooltip, Legend, Cell } from 'recharts';
 import { decisionSignalsApi } from '../api/decisionSignals';
 import { portfolioApi } from '../api/portfolio';
+import { stocksApi, type StockHistoryPoint } from '../api/stocks';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert, StatusDot } from '../components/common';
@@ -35,6 +36,10 @@ import type {
   DecisionSignalMarket,
 } from '../types/decisionSignals';
 import type {
+  DailyAnalysisRelationType,
+  DailyAnalysisUniverseResponse,
+  DailyAnalysisUserItem,
+  DailyAnalysisUserStockItem,
   PortfolioAccountItem,
   PortfolioCashDirection,
   PortfolioCashLedgerListItem,
@@ -201,6 +206,70 @@ type PortfolioExposureRow = {
   value: number;
   weightPct: number;
   count: number;
+};
+
+const DAILY_ANALYSIS_KLINE_DAYS = 24;
+
+type DailyAnalysisFormState = {
+  userKey: string;
+  displayName: string;
+  email: string;
+  symbol: string;
+  relationType: DailyAnalysisRelationType;
+  shares: string;
+  avgCost: string;
+  note: string;
+};
+
+type DailyKLineState = Record<string, StockHistoryPoint[]>;
+
+function toOptionalNumber(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const numeric = Number(trimmed);
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function formatDailySource(source: string): string {
+  const labels: Record<string, string> = {
+    user_holding: '持有',
+    user_watch: '自選',
+    portfolio_holding: 'Portfolio 持股',
+    stock_list: '原本自選',
+    tw_tech_candidate: '科技候選',
+  };
+  return labels[source] ?? source;
+}
+
+function formatCompactPrice(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '--';
+  return Number(value).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
+}
+
+const MiniKLine: React.FC<{ points?: StockHistoryPoint[] }> = ({ points = [] }) => {
+  const closes = points
+    .map((point) => Number(point.close))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (closes.length < 2) {
+    return <div className="h-10 rounded-md border border-white/10 bg-white/[0.03]" aria-label="K 線資料不足" />;
+  }
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const spread = Math.max(max - min, 1);
+  const path = closes
+    .map((value, index) => {
+      const x = (index / Math.max(1, closes.length - 1)) * 100;
+      const y = 34 - ((value - min) / spread) * 28;
+      return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(' ');
+  const rising = closes[closes.length - 1] >= closes[0];
+  return (
+    <svg className="h-10 w-full" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="近日日線">
+      <path d="M 0 34 L 100 34" className="stroke-white/10" strokeWidth="1" fill="none" />
+      <path d={path} className={rising ? 'stroke-success' : 'stroke-danger'} strokeWidth="2.4" fill="none" />
+    </svg>
+  );
 };
 
 function getSignalTime(item: DecisionSignalItem): number {
@@ -660,6 +729,24 @@ const PortfolioPage: React.FC = () => {
   const portfolioSignalsRequestRef = useRef(0);
   const [positionAnalysisLoadingKey, setPositionAnalysisLoadingKey] = useState<string | null>(null);
   const [positionAnalysisMessage, setPositionAnalysisMessage] = useState<string | null>(null);
+  const [dailyUsers, setDailyUsers] = useState<DailyAnalysisUserItem[]>([]);
+  const [dailyStocks, setDailyStocks] = useState<DailyAnalysisUserStockItem[]>([]);
+  const [dailyUniverse, setDailyUniverse] = useState<DailyAnalysisUniverseResponse | null>(null);
+  const [dailyKLines, setDailyKLines] = useState<DailyKLineState>({});
+  const [dailyAnalysisLoading, setDailyAnalysisLoading] = useState(false);
+  const [dailyAnalysisSaving, setDailyAnalysisSaving] = useState(false);
+  const [dailyAnalysisMessage, setDailyAnalysisMessage] = useState<string | null>(null);
+  const [dailyAnalysisError, setDailyAnalysisError] = useState<string | null>(null);
+  const [dailyAnalysisForm, setDailyAnalysisForm] = useState<DailyAnalysisFormState>({
+    userKey: 'default',
+    displayName: '',
+    email: '',
+    symbol: '',
+    relationType: 'holding',
+    shares: '',
+    avgCost: '',
+    note: '',
+  });
 
   const [brokers, setBrokers] = useState<PortfolioImportBrokerItem[]>([]);
   const [selectedBroker, setSelectedBroker] = useState('huatai');
@@ -780,6 +867,25 @@ const PortfolioPage: React.FC = () => {
     }
   }, [selectedBroker]);
 
+  const loadDailyAnalysisData = useCallback(async () => {
+    setDailyAnalysisLoading(true);
+    setDailyAnalysisError(null);
+    try {
+      const [usersResponse, stocksResponse, universeResponse] = await Promise.all([
+        portfolioApi.getDailyAnalysisUsers(false),
+        portfolioApi.getDailyAnalysisStocks(),
+        portfolioApi.getDailyAnalysisUniverse(),
+      ]);
+      setDailyUsers(usersResponse.users || []);
+      setDailyStocks(stocksResponse.items || []);
+      setDailyUniverse(universeResponse);
+    } catch (err) {
+      setDailyAnalysisError(getParsedApiError(err).message || '每日分析清單載入失敗');
+    } finally {
+      setDailyAnalysisLoading(false);
+    }
+  }, []);
+
   const loadSnapshotAndRisk = useCallback(async () => {
     setIsLoading(true);
     setRiskWarning(null);
@@ -879,7 +985,8 @@ const PortfolioPage: React.FC = () => {
   useEffect(() => {
     void loadAccounts();
     void loadBrokers();
-  }, [loadAccounts, loadBrokers]);
+    void loadDailyAnalysisData();
+  }, [loadAccounts, loadBrokers, loadDailyAnalysisData]);
 
   useEffect(() => {
     void loadSnapshotAndRisk();
@@ -907,6 +1014,42 @@ const PortfolioPage: React.FC = () => {
       setWriteWarning(null);
     }
   }, [writeBlocked]);
+
+  const dailyUniverseItems = useMemo(() => dailyUniverse?.items || [], [dailyUniverse]);
+
+  useEffect(() => {
+    const symbols = dailyUniverseItems
+      .map((item) => item.symbol)
+      .filter((symbol) => symbol && !dailyKLines[symbol]);
+    if (symbols.length === 0) return;
+
+    let cancelled = false;
+    const loadKLines = async () => {
+      const entries = await Promise.all(
+        symbols.map(async (symbol): Promise<readonly [string, StockHistoryPoint[]]> => {
+          try {
+            const response = await stocksApi.getHistory(symbol, DAILY_ANALYSIS_KLINE_DAYS);
+            return [symbol, response.data ?? []] as const;
+          } catch {
+            return [symbol, []] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setDailyKLines((current) => {
+        const next = { ...current };
+        for (const [symbol, data] of entries) {
+          next[symbol] = data;
+        }
+        return next;
+      });
+    };
+
+    void loadKLines();
+    return () => {
+      cancelled = true;
+    };
+  }, [dailyKLines, dailyUniverseItems]);
 
   const positionRows: FlatPosition[] = useMemo(() => {
     if (!snapshot) return [];
@@ -1059,6 +1202,55 @@ const PortfolioPage: React.FC = () => {
       setError(getParsedApiError(err));
     } finally {
       setPositionAnalysisLoadingKey(null);
+    }
+  };
+
+  const handleDailyAnalysisSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dailyAnalysisForm.userKey.trim() || !dailyAnalysisForm.symbol.trim()) {
+      setDailyAnalysisError('使用者與股票代碼必填');
+      return;
+    }
+    setDailyAnalysisSaving(true);
+    setDailyAnalysisError(null);
+    setDailyAnalysisMessage(null);
+    try {
+      await portfolioApi.upsertDailyAnalysisStock({
+        userKey: dailyAnalysisForm.userKey.trim(),
+        displayName: dailyAnalysisForm.displayName.trim() || undefined,
+        email: dailyAnalysisForm.email.trim() || undefined,
+        symbol: dailyAnalysisForm.symbol.trim(),
+        relationType: dailyAnalysisForm.relationType,
+        market: 'tw',
+        shares: toOptionalNumber(dailyAnalysisForm.shares),
+        avgCost: toOptionalNumber(dailyAnalysisForm.avgCost),
+        note: dailyAnalysisForm.note.trim() || undefined,
+      });
+      setDailyAnalysisMessage('已加入每日分析清單');
+      setDailyAnalysisForm((prev) => ({
+        ...prev,
+        symbol: '',
+        shares: '',
+        avgCost: '',
+        note: '',
+      }));
+      await loadDailyAnalysisData();
+    } catch (err) {
+      setDailyAnalysisError(getParsedApiError(err).message || '新增失敗');
+    } finally {
+      setDailyAnalysisSaving(false);
+    }
+  };
+
+  const handleDeleteDailyAnalysisStock = async (stock: DailyAnalysisUserStockItem) => {
+    setDailyAnalysisError(null);
+    setDailyAnalysisMessage(null);
+    try {
+      await portfolioApi.deleteDailyAnalysisStock(stock.id);
+      setDailyAnalysisMessage(`已移除 ${stock.symbol}`);
+      await loadDailyAnalysisData();
+    } catch (err) {
+      setDailyAnalysisError(getParsedApiError(err).message || '刪除失敗');
     }
   };
 
@@ -1527,6 +1719,175 @@ const PortfolioPage: React.FC = () => {
           message={positionAnalysisMessage}
         />
       ) : null}
+
+      <section className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">每日分析清單</h2>
+            <p className="text-xs text-secondary">
+              必跑 {dailyUniverse?.requiredCount ?? 0} 檔 · 候選 {dailyUniverse?.candidateCount ?? 0} 檔 · 上限 {dailyUniverse?.maxStocks ?? 15} 檔
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn-secondary inline-flex items-center justify-center gap-2 text-sm"
+            onClick={() => void loadDailyAnalysisData()}
+            disabled={dailyAnalysisLoading}
+            title="刷新每日分析清單"
+          >
+            <RefreshCw className={`h-4 w-4 ${dailyAnalysisLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
+            {dailyAnalysisLoading ? '刷新中' : '刷新'}
+          </button>
+        </div>
+
+        {dailyAnalysisError ? (
+          <InlineAlert
+            variant="danger"
+            className="rounded-lg px-3 py-2 text-xs shadow-none"
+            message={dailyAnalysisError}
+          />
+        ) : null}
+        {dailyAnalysisMessage ? (
+          <InlineAlert
+            variant="success"
+            className="rounded-lg px-3 py-2 text-xs shadow-none"
+            message={dailyAnalysisMessage}
+          />
+        ) : null}
+
+        <form className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-2" onSubmit={handleDailyAnalysisSubmit}>
+          <input
+            className={PORTFOLIO_INPUT_CLASS}
+            placeholder="使用者"
+            value={dailyAnalysisForm.userKey}
+            onChange={(e) => setDailyAnalysisForm((prev) => ({ ...prev, userKey: e.target.value }))}
+            required
+          />
+          <input
+            className={PORTFOLIO_INPUT_CLASS}
+            placeholder="Email（選填）"
+            value={dailyAnalysisForm.email}
+            onChange={(e) => setDailyAnalysisForm((prev) => ({ ...prev, email: e.target.value }))}
+          />
+          <input
+            className={PORTFOLIO_INPUT_CLASS}
+            placeholder="台股代碼，例如 2376"
+            value={dailyAnalysisForm.symbol}
+            onChange={(e) => setDailyAnalysisForm((prev) => ({ ...prev, symbol: e.target.value }))}
+            required
+          />
+          <select
+            className={PORTFOLIO_SELECT_CLASS}
+            value={dailyAnalysisForm.relationType}
+            onChange={(e) => setDailyAnalysisForm((prev) => ({
+              ...prev,
+              relationType: e.target.value as DailyAnalysisRelationType,
+            }))}
+          >
+            <option value="holding">持有</option>
+            <option value="watch">觀察</option>
+          </select>
+          <input
+            className={PORTFOLIO_INPUT_CLASS}
+            type="number"
+            min="0"
+            step="0.0001"
+            placeholder="股數（選填）"
+            value={dailyAnalysisForm.shares}
+            onChange={(e) => setDailyAnalysisForm((prev) => ({ ...prev, shares: e.target.value }))}
+          />
+          <div className="flex gap-2">
+            <input
+              className={PORTFOLIO_INPUT_CLASS}
+              type="number"
+              min="0"
+              step="0.0001"
+              placeholder="成本（選填）"
+              value={dailyAnalysisForm.avgCost}
+              onChange={(e) => setDailyAnalysisForm((prev) => ({ ...prev, avgCost: e.target.value }))}
+            />
+            <button
+              type="submit"
+              className="btn-secondary inline-flex h-11 w-11 shrink-0 items-center justify-center"
+              disabled={dailyAnalysisSaving}
+              title="加入每日分析"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        </form>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] gap-3">
+          <div className="rounded-lg border border-white/10 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-foreground">使用者自訂</h3>
+              <span className="text-[11px] text-secondary">{dailyUsers.length} 位使用者 · {dailyStocks.length} 檔</span>
+            </div>
+            {dailyStocks.length === 0 ? (
+              <div className="text-xs text-secondary">尚未新增自訂股票。</div>
+            ) : (
+              <div className="max-h-56 space-y-2 overflow-auto">
+                {dailyStocks.map((stock) => (
+                  <div key={stock.id} className="flex items-center justify-between gap-3 rounded-md bg-white/[0.03] px-3 py-2 text-xs">
+                    <div className="min-w-0">
+                      <div className="truncate font-mono text-foreground">{stock.symbol}</div>
+                      <div className="truncate text-secondary">
+                        {stock.userKey} · {stock.relationType === 'holding' ? '持有' : '觀察'}
+                        {stock.shares != null ? ` · ${formatCompactPrice(stock.shares)} 股` : ''}
+                        {stock.avgCost != null ? ` · 成本 ${formatCompactPrice(stock.avgCost)}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-secondary inline-flex h-8 w-8 shrink-0 items-center justify-center !px-0 !py-0"
+                      onClick={() => void handleDeleteDailyAnalysisStock(stock)}
+                      title={`移除 ${stock.symbol}`}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-2">
+            {dailyUniverseItems.length === 0 ? (
+              <div className="rounded-lg border border-white/10 p-4 text-xs text-secondary">
+                {dailyAnalysisLoading ? '正在載入每日分析清單...' : '沒有可顯示的每日分析清單。'}
+              </div>
+            ) : (
+              dailyUniverseItems.map((item) => {
+                const kline = dailyKLines[item.symbol] || [];
+                const latestClose = kline.length > 0 ? kline[kline.length - 1]?.close : undefined;
+                return (
+                  <div key={`${item.source}-${item.symbol}`} className="rounded-lg border border-white/10 bg-black/10 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-foreground">
+                          {item.stockName || item.symbol}
+                        </div>
+                        <div className="font-mono text-[11px] text-secondary">{item.symbol}</div>
+                      </div>
+                      <Badge variant={item.required ? 'success' : 'default'}>
+                        {formatDailySource(item.source)}
+                      </Badge>
+                    </div>
+                    <div className="mt-3">
+                      <MiniKLine points={kline} />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-secondary">
+                      <span>Score {item.watchScore}</span>
+                      <span>收盤 {formatCompactPrice(latestClose)}</span>
+                    </div>
+                    <div className="mt-1 truncate text-[11px] text-secondary">{item.reason}</div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </section>
 
       {(showCreateAccount || !hasAccounts) ? (
         <Card padding="md">

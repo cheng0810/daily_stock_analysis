@@ -961,6 +961,8 @@ class Config:
 
     # Unified temperature for all LLM calls (LLM_TEMPERATURE); legacy per-provider temps are fallback only
     llm_temperature: float = 0.7
+    analysis_llm_max_tokens: int = 8192
+    analysis_llm_stream_enabled: Optional[bool] = None
 
     # Provider prompt-cache controls. These do not control provider implicit cache.
     llm_prompt_cache_telemetry_enabled: bool = True
@@ -1033,6 +1035,7 @@ class Config:
     searxng_base_urls: List[str] = field(default_factory=list)  # SearXNG instance URLs (self-hosted, no quota)
     searxng_public_instances_enabled: bool = False  # Opt in to public discovery when base URLs are absent
     searxng_timeout_seconds: int = 10  # 自建 SearXNG 单次搜索超时（秒）
+    yahoo_finance_news_enabled: bool = True  # Enable Yahoo Finance RSS stock news provider
 
     # === Social Sentiment (US stocks only, api.adanos.org) ===
     social_sentiment_api_key: Optional[str] = None
@@ -1779,6 +1782,16 @@ class Config:
             os.getenv('SEARXNG_PUBLIC_INSTANCES_ENABLED'),
             default=False,
         )
+        yahoo_finance_news_enabled = parse_env_bool(
+            os.getenv('YAHOO_FINANCE_NEWS_ENABLED'),
+            default=True,
+        )
+        analysis_llm_stream_raw = os.getenv("ANALYSIS_LLM_STREAM_ENABLED")
+        analysis_llm_stream_enabled = (
+            None
+            if analysis_llm_stream_raw is None or not analysis_llm_stream_raw.strip()
+            else parse_env_bool(analysis_llm_stream_raw, default=True)
+        )
 
         # 企微消息类型与最大字节数逻辑
         wechat_msg_type = os.getenv('WECHAT_MSG_TYPE', 'markdown')
@@ -1882,6 +1895,13 @@ class Config:
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
             llm_temperature=resolve_unified_llm_temperature(litellm_model),
+            analysis_llm_max_tokens=parse_env_int(
+                os.getenv('ANALYSIS_LLM_MAX_TOKENS'),
+                8192,
+                field_name='ANALYSIS_LLM_MAX_TOKENS',
+                minimum=1024,
+            ),
+            analysis_llm_stream_enabled=analysis_llm_stream_enabled,
             litellm_config_path=litellm_config_path,
             llm_models_source=llm_models_source,
             llm_channels=llm_channels,
@@ -1945,6 +1965,7 @@ class Config:
             searxng_timeout_seconds=parse_env_int(
                 os.getenv('SEARXNG_TIMEOUT_SECONDS'), 10, field_name='SEARXNG_TIMEOUT_SECONDS', minimum=1
             ),
+            yahoo_finance_news_enabled=yahoo_finance_news_enabled,
             social_sentiment_api_key=os.getenv('SOCIAL_SENTIMENT_API_KEY') or None,
             social_sentiment_api_url=os.getenv('SOCIAL_SENTIMENT_API_URL', 'https://api.adanos.org').rstrip('/'),
             news_max_age_days=parse_env_int(os.getenv('NEWS_MAX_AGE_DAYS'), 3, field_name='NEWS_MAX_AGE_DAYS', minimum=1),
@@ -2968,7 +2989,7 @@ class Config:
         raw = (value or "").strip()
         if raw and not is_supported_report_language_value(raw):
             logging.getLogger(__name__).warning(
-                "REPORT_LANGUAGE '%s' invalid, fallback to 'zh' (valid: zh/en/ko)",
+                "REPORT_LANGUAGE '%s' invalid, fallback to 'zh' (valid: zh/zh-TW/en/ko)",
                 value,
             )
         return normalized
@@ -3094,7 +3115,7 @@ class Config:
         return bool(self.searxng_base_urls) or bool(self.searxng_public_instances_enabled)
 
     def has_search_capability_enabled(self) -> bool:
-        """Whether any search provider is configured or SearXNG fallback is enabled."""
+        """Whether any search provider is configured or keyless fallback is enabled."""
         return bool(
             self.anspire_api_keys
             or self.bocha_api_keys
@@ -3102,6 +3123,7 @@ class Config:
             or self.tavily_api_keys
             or self.brave_api_keys
             or self.serpapi_keys
+            or self.yahoo_finance_news_enabled
             or self.has_searxng_enabled()
         )
 
@@ -3531,7 +3553,7 @@ class Config:
         if not self.has_search_capability_enabled():
             issues.append(ConfigIssue(
                 severity="info",
-                message="未配置搜索引擎能力 (Bocha/MiniMax/Tavily/Brave/SerpAPI/SearXNG)，新闻搜索功能将不可用",
+                message="未配置搜索引擎能力 (Bocha/MiniMax/Tavily/Brave/SerpAPI/Yahoo Finance/SearXNG)，新闻搜索功能将不可用",
                 field="BOCHA_API_KEYS",
             ))
 

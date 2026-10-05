@@ -29,6 +29,83 @@ export interface PortfolioAccountCreateRequest {
   ownerId?: string;
 }
 
+export type DailyAnalysisRelationType = 'holding' | 'watch';
+
+export interface DailyAnalysisUserItem {
+  id: number;
+  userKey: string;
+  displayName?: string | null;
+  email?: string | null;
+  dailyEmailEnabled: boolean;
+  isActive: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface DailyAnalysisUserListResponse {
+  users: DailyAnalysisUserItem[];
+}
+
+export interface DailyAnalysisUserStockItem {
+  id: number;
+  userId: number;
+  userKey: string;
+  displayName?: string | null;
+  email?: string | null;
+  dailyEmailEnabled: boolean;
+  symbol: string;
+  stockName?: string | null;
+  market: string;
+  relationType: DailyAnalysisRelationType;
+  shares?: number | null;
+  avgCost?: number | null;
+  buyDate?: string | null;
+  note?: string | null;
+  enabled: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface DailyAnalysisUserStockListResponse {
+  items: DailyAnalysisUserStockItem[];
+}
+
+export interface DailyAnalysisUserStockUpsertRequest {
+  userKey: string;
+  symbol: string;
+  relationType: DailyAnalysisRelationType;
+  stockName?: string;
+  market?: 'cn' | 'hk' | 'us' | 'jp' | 'kr' | 'tw';
+  shares?: number;
+  avgCost?: number;
+  buyDate?: string;
+  note?: string;
+  displayName?: string;
+  email?: string;
+  dailyEmailEnabled?: boolean;
+}
+
+export interface DailyAnalysisUniverseItem {
+  symbol: string;
+  stockName?: string | null;
+  market: string;
+  required: boolean;
+  source: string;
+  watchScore: number;
+  reason: string;
+}
+
+export interface DailyAnalysisUniverseResponse {
+  symbols: string[];
+  items: DailyAnalysisUniverseItem[];
+  requiredCount: number;
+  candidateCount: number;
+  minStocks: number;
+  maxStocks: number;
+  watchScoreThreshold: number;
+  truncatedCandidateCount: number;
+}
+
 export interface PortfolioPositionItem {
   symbol: string;
   market: string;

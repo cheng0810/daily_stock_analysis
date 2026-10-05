@@ -8,15 +8,23 @@ from typing import Any, Dict, Optional
 
 from src.schemas.decision_scale import signal_key_for_score
 
-SUPPORTED_REPORT_LANGUAGES = ("zh", "en", "ko")
+SUPPORTED_REPORT_LANGUAGES = ("zh", "zh-tw", "en", "ko")
 
 _REPORT_LANGUAGE_ALIASES = {
     "zh-cn": "zh",
     "zh_cn": "zh",
     "zh-hans": "zh",
     "zh_hans": "zh",
-    "zh-tw": "zh",
-    "zh_tw": "zh",
+    "zh-tw": "zh-tw",
+    "zh_tw": "zh-tw",
+    "tw": "zh-tw",
+    "cht": "zh-tw",
+    "zh-hant": "zh-tw",
+    "zh_hant": "zh-tw",
+    "traditional": "zh-tw",
+    "traditional chinese": "zh-tw",
+    "繁體中文": "zh-tw",
+    "繁体中文": "zh-tw",
     "cn": "zh",
     "chinese": "zh",
     "english": "en",
@@ -32,27 +40,43 @@ _REPORT_LANGUAGE_ALIASES = {
 
 _OPERATION_ADVICE_CANONICAL_MAP = {
     "强烈买入": "strong_buy",
+    "強烈買入": "strong_buy",
     "strong buy": "strong_buy",
     "strong_buy": "strong_buy",
     "买入": "buy",
+    "買入": "buy",
     "buy": "buy",
     "加仓": "buy",
+    "加倉": "buy",
+    "加碼": "buy",
     "accumulate": "buy",
     "add position": "buy",
     "持有": "hold",
+    "持有观察": "hold_watch",
+    "持有觀察": "hold_watch",
     "洗盘观察": "hold",
+    "洗盤觀察": "hold",
     "观察": "hold",
+    "觀察": "hold",
     "hold": "hold",
+    "hold and watch": "hold_watch",
     "观望": "watch",
+    "觀望": "watch",
     "watch": "watch",
     "wait": "watch",
     "wait and see": "watch",
+    "range-bound watch": "watch",
+    "shakeout watch": "watch",
     "减仓": "reduce",
+    "減倉": "reduce",
+    "減碼": "reduce",
     "reduce": "reduce",
     "trim": "reduce",
     "卖出": "sell",
+    "賣出": "sell",
     "sell": "sell",
     "强烈卖出": "strong_sell",
+    "強烈賣出": "strong_sell",
     "strong sell": "strong_sell",
     "strong_sell": "strong_sell",
     "적극 매수": "strong_buy",
@@ -68,6 +92,7 @@ _OPERATION_ADVICE_CANONICAL_MAP = {
 _OPERATION_ADVICE_TRANSLATIONS = {
     "strong_buy": {"zh": "强烈买入", "en": "Strong Buy", "ko": "적극 매수"},
     "buy": {"zh": "买入", "en": "Buy", "ko": "매수"},
+    "hold_watch": {"zh": "持有观察", "en": "Hold and watch", "ko": "보유 관찰"},
     "hold": {"zh": "持有", "en": "Hold", "ko": "보유"},
     "watch": {"zh": "观望", "en": "Watch", "ko": "관망"},
     "reduce": {"zh": "减仓", "en": "Reduce", "ko": "비중축소"},
@@ -78,18 +103,26 @@ _OPERATION_ADVICE_TRANSLATIONS = {
 _TREND_PREDICTION_CANONICAL_MAP = {
     "强势空头": "strong_bearish",
     "强烈看多": "strong_bullish",
+    "強烈看多": "strong_bullish",
     "strong bullish": "strong_bullish",
     "very bullish": "strong_bullish",
     "强势多头": "strong_bullish",
+    "強勢多頭": "strong_bullish",
     "多头排列": "bullish",
+    "多頭排列": "bullish",
     "空头排列": "bearish",
+    "空頭排列": "bearish",
     "弱势多头": "bullish",
+    "弱勢多頭": "bullish",
     "弱势空头": "bearish",
+    "弱勢空頭": "bearish",
     "看多": "bullish",
     "盘整": "sideways",
+    "盤整": "sideways",
     "bullish": "bullish",
     "uptrend": "bullish",
     "震荡": "sideways",
+    "震盪": "sideways",
     "neutral": "sideways",
     "sideways": "sideways",
     "range-bound": "sideways",
@@ -97,6 +130,7 @@ _TREND_PREDICTION_CANONICAL_MAP = {
     "bearish": "bearish",
     "downtrend": "bearish",
     "强烈看空": "strong_bearish",
+    "強烈看空": "strong_bearish",
     "strong bearish": "strong_bearish",
     "very bearish": "strong_bearish",
     "강한 상승": "strong_bullish",
@@ -285,6 +319,7 @@ _BIAS_STATUS_CANONICAL_MAP = {
     "警惕": "caution",
     "caution": "caution",
     "危险": "danger",
+    "危險": "danger",
     "risk": "danger",
     "danger": "danger",
     "안전": "safe",
@@ -345,6 +380,248 @@ _CHIP_PLACEHOLDER_HINTS = (
     "missing",
     "not supported",
 )
+
+_SIMPLIFIED_TO_TRADITIONAL_PHRASES = {
+    "Hold and watch": "持有觀察",
+    "hold and watch": "持有觀察",
+    "持有观察": "持有觀察",
+    "Capital flow source unsupported": "資金流來源暫不支援",
+    "capital flow source unsupported": "資金流來源暫不支援",
+    "capital flow data unavailable": "資金流資料不可用",
+    "Capital flow unavailable": "資金流不可用",
+    "capital flow unavailable": "資金流不可用",
+    "the buy call lacks capital-flow confirmation, so treat it as watch-only.": "買入結論缺少資金面確認，先按觀察處理。",
+    "The buy call lacks capital-flow confirmation, so treat it as watch-only.": "買入結論缺少資金面確認，先按觀察處理。",
+    "Do not chase": "不要追高",
+    "support confirmation": "支撐確認",
+    "valid breakout": "有效突破",
+    "持有觀察:": "持有觀察：",
+    "; ": "；",
+    ";": "；",
+    "强烈买入": "強烈買入",
+    "强烈卖出": "強烈賣出",
+    "买入": "買入",
+    "卖出": "賣出",
+    "加仓": "加碼",
+    "减仓": "減碼",
+    "观望": "觀望",
+    "洗盘观察": "洗盤觀察",
+    "强烈看多": "強烈看多",
+    "强烈看空": "強烈看空",
+    "多头排列": "多頭排列",
+    "空头排列": "空頭排列",
+    "弱势多头": "弱勢多頭",
+    "弱势空头": "弱勢空頭",
+    "震荡": "震盪",
+    "极度乐观": "極度樂觀",
+    "极度悲观": "極度悲觀",
+    "乐观": "樂觀",
+    "悲观": "悲觀",
+    "决策仪表盘": "決策儀表板",
+    "决策简报": "決策簡報",
+    "市场状态": "市場狀態",
+    "市场焦点": "市場焦點",
+    "市场情绪": "市場情緒",
+    "市场": "市場",
+    "共分析": "共分析",
+    "只股票": "檔股票",
+    "只": "檔",
+    "分析结果摘要": "分析結果摘要",
+    "重要信息速览": "重要資訊速覽",
+    "舆情情绪": "輿情情緒",
+    "业绩预期": "業績預期",
+    "风险警报": "風險警報",
+    "利好催化": "利多催化",
+    "最新动态": "最新動態",
+    "新闻": "新聞",
+    "近3日无重大": "近3日無重大",
+    "无重大": "無重大",
+    "无": "無",
+    "单月": "單月",
+    "单日": "單日",
+    "单": "單",
+    "核心结论": "核心結論",
+    "一句话决策": "一句話決策",
+    "时效性": "時效性",
+    "本周内": "本週內",
+    "盘后": "盤後",
+    "持仓情况": "持倉情況",
+    "操作建议": "操作建議",
+    "空仓者": "空手者",
+    "持仓者": "持有者",
+    "继续持有": "繼續持有",
+    "当日行情": "當日行情",
+    "收盘": "收盤",
+    "昨收": "昨收",
+    "开盘": "開盤",
+    "最高": "最高",
+    "最低": "最低",
+    "涨跌幅": "漲跌幅",
+    "涨跌额": "漲跌額",
+    "振幅": "振幅",
+    "成交量": "成交量",
+    "成交额": "成交額",
+    "当前价": "目前價",
+    "量比": "量比",
+    "换手率": "週轉率",
+    "行情来源": "行情來源",
+    "实时": "即時",
+    "数据透视": "資料透視",
+    "数据源": "資料源",
+    "数据": "資料",
+    "资料": "資料",
+    "均线排列": "均線排列",
+    "均线": "均線",
+    "趋势强度": "趨勢強度",
+    "价格指标": "價格指標",
+    "技术性": "技術性",
+    "指标": "指標",
+    "技术面": "技術面",
+    "技术": "技術",
+    "乖离率": "乖離率",
+    "支撑位": "支撐位",
+    "压力位": "壓力位",
+    "筹码": "籌碼",
+    "盘中决策护栏": "盤中決策護欄",
+    "行动窗口": "行動窗口",
+    "当前动作": "目前動作",
+    "观察条件": "觀察條件",
+    "下次检查": "下次檢查",
+    "置信度理由": "信心理由",
+    "数据限制": "資料限制",
+    "作战计划": "操作計畫",
+    "理想买入点": "理想買點",
+    "次优买入点": "次佳買點",
+    "止损位": "停損位",
+    "目标位": "目標價",
+    "仓位建议": "部位建議",
+    "建仓策略": "建倉策略",
+    "风控策略": "風控策略",
+    "强制降级": "強制降級",
+    "降级": "降級",
+    "检查清单": "檢查清單",
+    "检查未通过项": "未通過檢查項",
+    "历史信号对比": "歷史訊號對比",
+    "时间": "時間",
+    "评分": "分數",
+    "建议": "建議",
+    "趋势": "趨勢",
+    "报告生成时间": "報告產生時間",
+    "生成时间": "產生時間",
+    "无分析结果": "無分析結果",
+    "股票分析报告": "股票分析報告",
+    "均分": "平均分數",
+    "操作点位": "操作價位",
+    "持仓建议": "持有建議",
+    "分析模型": "分析模型",
+    "AI生成，仅供参考，不构成投资建议": "AI 產生，僅供參考，不構成投資建議",
+    "详细报告见": "詳細報告見",
+    "财务摘要": "財務摘要",
+    "报告期": "報告期",
+    "营业收入": "營業收入",
+    "归母净利润": "歸屬母公司淨利",
+    "经营现金流": "營業現金流",
+    "营收同比": "營收年增",
+    "净利同比": "淨利年增",
+    "毛利率": "毛利率",
+    "股东回报": "股東回報",
+    "近12月每股现金分红(税前)": "近 12 個月每股現金股利（稅前）",
+    "近12月分红次数": "近 12 個月配息次數",
+    "最近除息日": "最近除息日",
+    "三大法人动向": "三大法人動向",
+    "正数=净买超，负数=净卖超；单位为股。": "正數=淨買超，負數=淨賣超；單位為股。",
+    "外资": "外資",
+    "投信": "投信",
+    "自营商": "自營商",
+    "三大法人合计": "三大法人合計",
+    "关联板块": "相關族群",
+    "行业板块": "產業族群",
+    "概念板块": "題材族群",
+    "板块": "族群",
+    "类型": "類型",
+    "板块表现": "族群表現",
+    "板块涨跌幅": "族群漲跌幅",
+    "领涨": "領漲",
+    "领跌": "領跌",
+    "信号归因分析": "訊號歸因分析",
+    "归因权重": "歸因權重",
+    "技术指标": "技術指標",
+    "新闻舆情": "新聞輿情",
+    "基本面": "基本面",
+    "市场环境": "市場環境",
+    "最强看多信号": "最強看多訊號",
+    "最强看空信号": "最強看空訊號",
+    "确认": "確認",
+    "标准": "標準",
+    "显著": "顯著",
+    "检索": "檢索",
+    "显示": "顯示",
+    "虽": "雖",
+    "处于": "處於",
+    "安全范围": "安全範圍",
+    "警戒线": "警戒線",
+    "资金流向": "資金流向",
+    "资金流": "資金流",
+    "资金": "資金",
+    "持续": "持續",
+    "净买超": "淨買超",
+    "净卖超": "淨賣超",
+    "买超": "買超",
+    "卖超": "賣超",
+    "合计": "合計",
+    "机构": "機構",
+    "动向": "動向",
+    "相关": "相關",
+    "热点": "熱點",
+    "半导体": "半導體",
+    "大涨": "大漲",
+    "量价齐升": "量價齊升",
+    "齐升": "齊升",
+    "业绩": "業績",
+    "财报": "財報",
+    "营收": "營收",
+    "净利": "淨利",
+    "经营": "經營",
+    "现金流": "現金流",
+    "准确性": "準確性",
+    "点": "點",
+    "支撑": "支撐",
+    "短线": "短線",
+    "长线": "長線",
+    "涨多": "漲多",
+    "上涨": "上漲",
+    "持股待涨": "持股待漲",
+    "待涨": "待漲",
+    "回调": "回檔",
+    "回档": "回檔",
+    "超买": "超買",
+    "严禁": "嚴禁",
+    "强劲": "強勁",
+    "谨慎": "謹慎",
+    "范围": "範圍",
+    "阈值": "閾值",
+    "风险点": "風險點",
+    "止损": "停損",
+    "风险": "風險",
+    "升高": "升高",
+    "待补充": "待補充",
+    "未知": "未知",
+    "数据缺失": "資料缺失",
+    "待确认股票": "待確認股票",
+    "筹码分布未启用或数据源暂不可用，未纳入筹码判断。": "籌碼分布未啟用或資料源暫不可用，未納入籌碼判斷。",
+}
+
+
+def to_traditional_zh(value: Any) -> str:
+    """Best-effort conversion for report labels and generated Chinese snippets."""
+    text = str(value or "")
+    for simplified, traditional in sorted(
+        _SIMPLIFIED_TO_TRADITIONAL_PHRASES.items(),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    ):
+        text = text.replace(simplified, traditional)
+    return text
 
 _CHIP_METRIC_KEYS = ("profit_ratio", "avg_cost", "concentration")
 _CHIP_UNAVAILABLE_REASON_KEYS = (
@@ -832,27 +1109,40 @@ def is_supported_report_language_value(value: Optional[str]) -> bool:
 def get_report_labels(language: Optional[str]) -> Dict[str, str]:
     """Return UI copy for the selected report language."""
     normalized = normalize_report_language(language)
+    if normalized == "zh-tw":
+        return {
+            key: to_traditional_zh(value)
+            for key, value in _REPORT_LABELS["zh"].items()
+        }
     return _REPORT_LABELS[normalized]
 
 
 def get_placeholder_text(language: Optional[str]) -> str:
     """Return placeholder text for missing localized content."""
-    return _PLACEHOLDER_BY_LANGUAGE[normalize_report_language(language)]
+    normalized = normalize_report_language(language)
+    value = _PLACEHOLDER_BY_LANGUAGE["zh" if normalized == "zh-tw" else normalized]
+    return to_traditional_zh(value) if normalized == "zh-tw" else value
 
 
 def get_unknown_text(language: Optional[str]) -> str:
     """Return localized unknown text."""
-    return _UNKNOWN_BY_LANGUAGE[normalize_report_language(language)]
+    normalized = normalize_report_language(language)
+    value = _UNKNOWN_BY_LANGUAGE["zh" if normalized == "zh-tw" else normalized]
+    return to_traditional_zh(value) if normalized == "zh-tw" else value
 
 
 def get_no_data_text(language: Optional[str]) -> str:
     """Return localized data unavailable text."""
-    return _NO_DATA_BY_LANGUAGE[normalize_report_language(language)]
+    normalized = normalize_report_language(language)
+    value = _NO_DATA_BY_LANGUAGE["zh" if normalized == "zh-tw" else normalized]
+    return to_traditional_zh(value) if normalized == "zh-tw" else value
 
 
 def get_chip_unavailable_text(language: Optional[str]) -> str:
     """Return the localized one-line chip distribution fallback text."""
-    return _CHIP_UNAVAILABLE_BY_LANGUAGE[normalize_report_language(language)]
+    normalized = normalize_report_language(language)
+    value = _CHIP_UNAVAILABLE_BY_LANGUAGE["zh" if normalized == "zh-tw" else normalized]
+    return to_traditional_zh(value) if normalized == "zh-tw" else value
 
 
 def _normalize_lookup_key(value: Any) -> str:
@@ -958,7 +1248,9 @@ def _translate_from_map(
 
     canonical = _canonicalize_lookup_value(raw_text, canonical_map)
     if canonical:
-        return translations[canonical][normalized_language]
+        lookup_language = "zh" if normalized_language == "zh-tw" else normalized_language
+        translated = translations[canonical][lookup_language]
+        return to_traditional_zh(translated) if normalized_language == "zh-tw" else translated
     return raw_text
 
 
@@ -981,6 +1273,9 @@ def localize_trend_prediction(value: Any, language: Optional[str]) -> str:
     if normalized_language == "zh":
         if re.search(r"[\u4e00-\u9fff]", raw_text):
             return raw_text
+    if normalized_language == "zh-tw":
+        if re.search(r"[\u4e00-\u9fff]", raw_text):
+            return to_traditional_zh(raw_text)
     return _translate_from_map(
         value,
         normalized_language,
@@ -1257,7 +1552,7 @@ def infer_decision_type_from_advice(value: Any, default: str = "hold") -> str:
         return "buy"
     if best_canonical in {"reduce", "sell", "strong_sell"}:
         return "sell"
-    if best_canonical in {"hold", "watch"}:
+    if best_canonical in {"hold", "hold_watch", "watch"}:
         return "hold"
 
     return default
@@ -1266,19 +1561,27 @@ def infer_decision_type_from_advice(value: Any, default: str = "hold") -> str:
 def get_signal_level(advice: Any, score: Any, language: Optional[str]) -> tuple[str, str, str]:
     """Return localized signal text, emoji, and stable color tag."""
     normalized_language = normalize_report_language(language)
+    lookup_language = "zh" if normalized_language == "zh-tw" else normalized_language
+
+    def _label(key: str) -> str:
+        value = _OPERATION_ADVICE_TRANSLATIONS[key][lookup_language]
+        return to_traditional_zh(value) if normalized_language == "zh-tw" else value
+
     canonical = _canonicalize_lookup_value(advice, _OPERATION_ADVICE_CANONICAL_MAP)
     if canonical == "strong_buy":
-        return (_OPERATION_ADVICE_TRANSLATIONS["strong_buy"][normalized_language], "💚", "strong_buy")
+        return (_label("strong_buy"), "💚", "strong_buy")
     if canonical == "buy":
-        return (_OPERATION_ADVICE_TRANSLATIONS["buy"][normalized_language], "🟢", "buy")
+        return (_label("buy"), "🟢", "buy")
+    if canonical == "hold_watch":
+        return (_label("hold_watch"), "🟡", "hold")
     if canonical == "hold":
-        return (_OPERATION_ADVICE_TRANSLATIONS["hold"][normalized_language], "🟡", "hold")
+        return (_label("hold"), "🟡", "hold")
     if canonical == "watch":
-        return (_OPERATION_ADVICE_TRANSLATIONS["watch"][normalized_language], "⚪", "watch")
+        return (_label("watch"), "⚪", "watch")
     if canonical == "reduce":
-        return (_OPERATION_ADVICE_TRANSLATIONS["reduce"][normalized_language], "🟠", "reduce")
+        return (_label("reduce"), "🟠", "reduce")
     if canonical in {"sell", "strong_sell"}:
-        return (_OPERATION_ADVICE_TRANSLATIONS["sell"][normalized_language], "🔴", "sell")
+        return (_label("sell"), "🔴", "sell")
 
     try:
         numeric_score = int(float(score))
@@ -1287,22 +1590,26 @@ def get_signal_level(advice: Any, score: Any, language: Optional[str]) -> tuple[
 
     score_signal = signal_key_for_score(numeric_score)
     if score_signal == "strong_buy":
-        return (_OPERATION_ADVICE_TRANSLATIONS["strong_buy"][normalized_language], "💚", "strong_buy")
+        return (_label("strong_buy"), "💚", "strong_buy")
     if score_signal == "buy":
-        return (_OPERATION_ADVICE_TRANSLATIONS["buy"][normalized_language], "🟢", "buy")
+        return (_label("buy"), "🟢", "buy")
     if score_signal == "watch":
-        return (_OPERATION_ADVICE_TRANSLATIONS["watch"][normalized_language], "⚪", "watch")
+        return (_label("watch"), "⚪", "watch")
     if score_signal == "reduce":
-        return (_OPERATION_ADVICE_TRANSLATIONS["reduce"][normalized_language], "🟠", "reduce")
-    return (_OPERATION_ADVICE_TRANSLATIONS["sell"][normalized_language], "🔴", "sell")
+        return (_label("reduce"), "🟠", "reduce")
+    return (_label("sell"), "🔴", "sell")
 
 
 def get_localized_stock_name(value: Any, code: Any, language: Optional[str]) -> str:
     """Return a localized stock name placeholder when the original name is missing."""
     raw_text = str(value or "").strip()
     if not _is_placeholder_stock_name(raw_text, code):
+        if normalize_report_language(language) == "zh-tw":
+            return to_traditional_zh(raw_text)
         return raw_text
-    return _GENERIC_STOCK_NAME_BY_LANGUAGE[normalize_report_language(language)]
+    normalized = normalize_report_language(language)
+    value = _GENERIC_STOCK_NAME_BY_LANGUAGE["zh" if normalized == "zh-tw" else normalized]
+    return to_traditional_zh(value) if normalized == "zh-tw" else value
 
 
 def get_sentiment_label(score: int, language: Optional[str]) -> str:
@@ -1331,11 +1638,13 @@ def get_sentiment_label(score: int, language: Optional[str]) -> str:
         return "매우 비관"
 
     if score >= 80:
-        return "极度乐观"
-    if score >= 60:
-        return "乐观"
-    if score >= 40:
-        return "中性"
-    if score >= 20:
-        return "悲观"
-    return "极度悲观"
+        value = "极度乐观"
+    elif score >= 60:
+        value = "乐观"
+    elif score >= 40:
+        value = "中性"
+    elif score >= 20:
+        value = "悲观"
+    else:
+        value = "极度悲观"
+    return to_traditional_zh(value) if normalized == "zh-tw" else value

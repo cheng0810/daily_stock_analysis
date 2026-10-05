@@ -577,6 +577,32 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_yahoo_news_and_analysis_llm_env_vars_parse(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "STOCK_LIST": "2330.TW",
+                "LITELLM_MODEL": "openai/qwen3.8-27b",
+                "OPENAI_API_KEY": "local-no-token",
+                "OPENAI_BASE_URL": "http://100.68.47.105:8001/v1",
+                "YAHOO_FINANCE_NEWS_ENABLED": "false",
+                "ANALYSIS_LLM_MAX_TOKENS": "16000",
+                "ANALYSIS_LLM_STREAM_ENABLED": "false",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        self.assertFalse(config.yahoo_finance_news_enabled)
+        self.assertEqual(config.analysis_llm_max_tokens, 16000)
+        self.assertFalse(config.analysis_llm_stream_enabled)
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_report_language_prefers_preexisting_process_env_over_env_file(
         self,
         _mock_parse_yaml,

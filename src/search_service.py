@@ -13,9 +13,11 @@ A股自选股智能分析系统 - 搜索服务模块
 
 import logging
 import multiprocessing
+import html
 import re
 import threading
 import time
+import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -40,6 +42,7 @@ from src.config import (
     resolve_news_window_days,
 )
 from src.data.stock_mapping import (
+    STOCK_ENGLISH_NAME_MAP,
     canonicalize_foreign_stock_code,
     foreign_stock_english_aliases,
 )
@@ -2241,6 +2244,191 @@ class SearXNGSearchProvider(BaseSearchProvider):
         )
 
 
+class YahooFinanceNewsProvider(BaseSearchProvider):
+    """Yahoo Finance RSS news provider.
+
+    This provider is intentionally narrow: it only handles stock-symbol news
+    feeds and requires no API key. General keyword searches should continue to
+    use the regular search providers.
+    """
+
+    API_ENDPOINT = "https://feeds.finance.yahoo.com/rss/2.0/headline"
+    REQUEST_TIMEOUT_SECONDS = 10
+    _TW_SUFFIXES = (".TW", ".TWO")
+    _SYMBOL_RE = re.compile(
+        r"(?<![A-Za-z0-9_.])("
+        r"\d{4}\.(?:TW|TWO)|"
+        r"\d{4,5}\.HK|"
+        r"HK\d{4,5}|"
+        r"[A-Z]{1,5}(?:\.[A-Z])?"
+        r")(?![A-Za-z0-9_.])",
+        re.IGNORECASE,
+    )
+
+    def __init__(self):
+        super().__init__([], "YahooFinanceRSS")
+
+    @property
+    def is_available(self) -> bool:
+        return True
+
+    def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
+        raise NotImplementedError("YahooFinanceNewsProvider.search handles keyless RSS requests directly")
+
+    @classmethod
+    def _extract_symbol(cls, query: str) -> Optional[str]:
+        text = str(query or "")
+        for match in cls._SYMBOL_RE.finditer(text):
+            symbol = match.group(1).strip().upper()
+            if not symbol:
+                continue
+            if symbol.startswith("HK") and symbol[2:].isdigit():
+                digits = symbol[2:]
+                symbol = f"{digits[-4:].zfill(4)}.HK"
+            if symbol in {"STOCK", "NEWS", "TODAY"}:
+                continue
+            return symbol
+        return None
+
+    @classmethod
+    def can_search_query(cls, query: str) -> bool:
+        return cls._extract_symbol(query) is not None
+
+    @classmethod
+    def _locale_params(cls, symbol: str) -> Dict[str, str]:
+        if symbol.upper().endswith(cls._TW_SUFFIXES):
+            return {"region": "TW", "lang": "zh-Hant-TW"}
+        return {"region": "US", "lang": "en-US"}
+
+    @staticmethod
+    def _clean_text(value: Optional[str], *, limit: int = 500) -> str:
+        text = html.unescape(value or "")
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:limit]
+
+    @staticmethod
+    def _extract_domain(url: str) -> str:
+        try:
+            parsed = urlparse(url)
+            return parsed.netloc.replace("www.", "") or "Yahoo Finance"
+        except Exception:
+            return "Yahoo Finance"
+
+    def search(self, query: str, max_results: int = 5, days: int = 7) -> SearchResponse:
+        start_time = time.time()
+        symbol = self._extract_symbol(query)
+        if not symbol:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self.name,
+                success=False,
+                error_message="无法识别 Yahoo Finance 股票代码",
+                search_time=time.time() - start_time,
+            )
+
+        params = {"s": symbol, **self._locale_params(symbol)}
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
+            ),
+            "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+        }
+
+        try:
+            response = requests.get(
+                self.API_ENDPOINT,
+                headers=headers,
+                params=params,
+                timeout=self.REQUEST_TIMEOUT_SECONDS,
+            )
+            if response.status_code != 200:
+                return SearchResponse(
+                    query=query,
+                    results=[],
+                    provider=self.name,
+                    success=False,
+                    error_message=f"HTTP {response.status_code}: {response.text[:200]}",
+                    search_time=time.time() - start_time,
+                )
+
+            raw_text = response.text or ""
+            if "<rss" not in raw_text[:500].lower():
+                return SearchResponse(
+                    query=query,
+                    results=[],
+                    provider=self.name,
+                    success=False,
+                    error_message="Yahoo Finance RSS 响应不是 RSS XML",
+                    search_time=time.time() - start_time,
+                )
+
+            root = ET.fromstring(raw_text)
+            results: List[SearchResult] = []
+            for item in root.findall(".//item"):
+                title = self._clean_text(item.findtext("title"), limit=180)
+                link = self._clean_text(item.findtext("link"), limit=500)
+                if not title or not link:
+                    continue
+                results.append(
+                    SearchResult(
+                        title=title,
+                        snippet=self._clean_text(item.findtext("description"), limit=500),
+                        url=link,
+                        source=self._extract_domain(link),
+                        published_date=self._clean_text(item.findtext("pubDate"), limit=80),
+                    )
+                )
+                if len(results) >= max_results:
+                    break
+
+            return SearchResponse(
+                query=query,
+                results=results,
+                provider=self.name,
+                success=True,
+                search_time=time.time() - start_time,
+            )
+        except requests.exceptions.Timeout:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self.name,
+                success=False,
+                error_message="请求超时",
+                search_time=time.time() - start_time,
+            )
+        except requests.exceptions.RequestException as exc:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self.name,
+                success=False,
+                error_message=f"网络请求失败: {exc}",
+                search_time=time.time() - start_time,
+            )
+        except ET.ParseError as exc:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self.name,
+                success=False,
+                error_message=f"RSS XML 解析失败: {exc}",
+                search_time=time.time() - start_time,
+            )
+        except Exception as exc:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self.name,
+                success=False,
+                error_message=f"未知错误: {exc}",
+                search_time=time.time() - start_time,
+            )
+
+
 class SearchService:
     """
     搜索服务
@@ -2412,6 +2600,7 @@ class SearchService:
         searxng_base_urls: Optional[List[str]] = None,
         searxng_public_instances_enabled: bool = False,
         searxng_timeout_seconds: Optional[int] = None,
+        yahoo_finance_news_enabled: bool = True,
         news_max_age_days: int = 3,
         news_strategy_profile: str = "short",
     ):
@@ -2427,6 +2616,7 @@ class SearchService:
             minimax_keys: MiniMax API Key 列表
             searxng_base_urls: SearXNG 实例地址列表（自建无配额兜底）
             searxng_public_instances_enabled: 未配置自建实例时，是否自动使用公共 SearXNG 实例
+            yahoo_finance_news_enabled: 是否启用 Yahoo Finance RSS 股票新闻（无需 API Key）
             news_max_age_days: 新闻最大时效（天）
             news_strategy_profile: 新闻窗口策略档位（ultra_short/short/medium/long）
         """
@@ -2440,10 +2630,12 @@ class SearchService:
             "searxng_base_urls": list(searxng_base_urls or []),
             "searxng_public_instances_enabled": bool(searxng_public_instances_enabled),
             "searxng_timeout_seconds": searxng_timeout_seconds,
+            "yahoo_finance_news_enabled": bool(yahoo_finance_news_enabled),
             "news_max_age_days": int(news_max_age_days),
             "news_strategy_profile": news_strategy_profile,
         }
         self._providers: List[BaseSearchProvider] = []
+        self._yahoo_finance_news_provider: Optional[YahooFinanceNewsProvider] = None
         self.news_max_age_days = max(1, news_max_age_days)
         raw_profile = (news_strategy_profile or "short").strip().lower()
         self.news_strategy_profile = normalize_news_strategy_profile(news_strategy_profile)
@@ -2487,7 +2679,14 @@ class SearchService:
             self._providers.append(MiniMaxSearchProvider(minimax_keys))
             logger.info(f"已配置 MiniMax 搜索，共 {len(minimax_keys)} 个 API Key")
 
-        # 6. SearXNG（自建实例优先；未配置时可自动发现公共实例）
+        # 6. Yahoo Finance RSS（无需 API Key）只处理股票符号新闻。
+        # 不放入通用 provider list，避免把 fresh-clone 的「未配置通用搜索」
+        # 误判为可执行题材/通用新闻搜索。
+        if yahoo_finance_news_enabled:
+            self._yahoo_finance_news_provider = YahooFinanceNewsProvider()
+            logger.info("已启用 Yahoo Finance RSS 股票新闻")
+
+        # 7. SearXNG（自建实例优先；未配置时可自动发现公共实例）
         searxng_provider = SearXNGSearchProvider(
             searxng_base_urls,
             use_public_instances=bool(searxng_public_instances_enabled and not searxng_base_urls),
@@ -2500,12 +2699,14 @@ class SearchService:
             else:
                 logger.info("已启用 SearXNG 公共实例自动发现模式")
 
-        # 7. Anspire Search（实时智能搜索优化）
+        # 8. Anspire Search（实时智能搜索优化）
         if anspire_keys:
             self._providers.insert(0, AnspireSearchProvider(anspire_keys))
             logger.info(f"已配置 Anspire Search 搜索，共 {len(anspire_keys)} 个 API Key")
             
-        if not self._providers:
+        if not self._providers and self._yahoo_finance_news_provider is not None:
+            logger.info("未配置通用搜索引擎，仅启用 Yahoo Finance RSS 股票新闻")
+        elif not self._providers:
             logger.warning("未配置任何搜索能力，新闻搜索功能将不可用")
 
         # In-memory search result cache: {cache_key: (timestamp, SearchResponse)}
@@ -2524,7 +2725,7 @@ class SearchService:
     
     @staticmethod
     def _is_foreign_stock(stock_code: str) -> bool:
-        """判断是否为港股或美股。
+        """判断是否为港股、美股或已登记的台湾 Yahoo 股票符号。
 
         Honours all canonical input forms — bare ticker (``AAPL`` / ``00700``),
         suffixed ticker (``AAPL.US`` / ``00700.HK``), and prefixed HK ticker
@@ -2537,6 +2738,8 @@ class SearchService:
         code = canonicalize_foreign_stock_code(stock_code).strip()
         if not code:
             return False
+        if SearchService._is_taiwan_stock(stock_code):
+            return True
         # 美股：1-5个大写字母，可能包含点（如 BRK.B）
         if SearchService._US_STOCK_RE.match(code):
             return True
@@ -2546,6 +2749,23 @@ class SearchService:
         if code.isdigit() and len(code) == 5:
             return True
         return False
+
+    @staticmethod
+    def _is_taiwan_stock(stock_code: str) -> bool:
+        """Return True for explicit .TW/.TWO symbols and mapped Taiwan bare codes."""
+
+        raw = (stock_code or "").strip().upper()
+        if not raw:
+            return False
+        if raw.endswith((".TW", ".TWO")):
+            body = raw.rsplit(".", 1)[0]
+            return body.isdigit() and (len(body) == 4 or body.startswith("00"))
+        canonical = canonicalize_foreign_stock_code(raw)
+        if not canonical or not canonical.isdigit():
+            return False
+        return canonical in STOCK_ENGLISH_NAME_MAP and (
+            len(canonical) == 4 or canonical.startswith("00")
+        )
 
     @staticmethod
     def _foreign_english_query_terms(stock_code: str, stock_name: str) -> Tuple[str, ...]:
@@ -2692,8 +2912,25 @@ class SearchService:
 
     @property
     def is_available(self) -> bool:
-        """检查是否有可用的搜索引擎"""
+        """检查是否有可用的通用搜索引擎"""
         return any(p.is_available for p in self._providers)
+
+    @property
+    def stock_news_available(self) -> bool:
+        """检查是否有可用的个股新闻搜索能力。"""
+        yahoo_available = bool(
+            self._yahoo_finance_news_provider
+            and self._yahoo_finance_news_provider.is_available
+        )
+        return self.is_available or yahoo_available
+
+    def _stock_news_providers(self, query: Optional[str] = None) -> List[BaseSearchProvider]:
+        providers = list(self._providers)
+        yahoo_provider = self._yahoo_finance_news_provider
+        if not providers and yahoo_provider and yahoo_provider.is_available:
+            if query is None or yahoo_provider.can_search_query(query):
+                providers.append(yahoo_provider)
+        return providers
 
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
         """Build a cache key from query parameters."""
@@ -3840,6 +4077,14 @@ class SearchService:
         return max(0, int((time.monotonic() - started_at) * 1000))
 
     @staticmethod
+    def _is_primary_intel_provider(provider: BaseSearchProvider) -> bool:
+        if isinstance(provider, YahooFinanceNewsProvider):
+            return False
+        if isinstance(provider, SearXNGSearchProvider) and getattr(provider, "_use_public_instances", False):
+            return False
+        return True
+
+    @staticmethod
     def _record_news_search_run(
         *,
         provider: str,
@@ -4048,20 +4293,25 @@ class SearchService:
         )
 
         # 构建搜索查询（优化搜索效果）
-        is_foreign = self._is_foreign_stock(stock_code)
+        is_taiwan = self._is_taiwan_stock(stock_code)
+        is_foreign = self._is_foreign_stock(stock_code) and not is_taiwan
         # Issue #2026: When STOCK_NAME_MAP maps a foreign ticker to a Chinese
         # display name (e.g. AAPL -> 苹果), the English news search query would
         # otherwise contain the Chinese name and miss English headlines.
         # Resolve the canonical English alias (single source of truth:
         # STOCK_ENGLISH_NAME_MAP in src/data/stock_mapping.py) so the foreign
         # query path uses a real English company name.
-        english_aliases = self._foreign_english_query_terms(stock_code, stock_name)
+        english_aliases = (
+            ()
+            if is_taiwan
+            else self._foreign_english_query_terms(stock_code, stock_name)
+        )
         effective_name = english_aliases[0] if english_aliases else stock_name
         short_name = english_aliases[-1] if english_aliases else None
         # Issue #2026: Foreign tickers must bypass prefer_chinese even when the
         # display name is Chinese (e.g. AAPL -> 苹果), otherwise the foreign
         # branch below is unreachable and English headlines are missed.
-        prefer_chinese = prefer_chinese and not (is_foreign and english_aliases)
+        prefer_chinese = prefer_chinese and not (is_foreign and english_aliases and not is_taiwan)
         if focus_keywords:
             # 如果提供了关键词，直接使用关键词作为查询
             query = " ".join(focus_keywords)
@@ -4073,7 +4323,7 @@ class SearchService:
                 if stock_code
                 else f"{stock_name} 股票 最新消息"
             )
-        elif is_foreign:
+        elif is_foreign and not is_taiwan:
             # 港股/美股使用英文搜索关键词；优先使用英文公司名（issue #2026）
             if english_aliases and short_name and short_name != effective_name:
                 query = (
@@ -4133,7 +4383,7 @@ class SearchService:
             had_provider_success = False
             best_ranked_response: Optional[SearchResponse] = None
             best_ranked_stats: Optional[Dict[str, int]] = None
-            for provider in self._providers:
+            for provider in self._stock_news_providers(query):
                 if not provider.is_available:
                     continue
 
@@ -4155,7 +4405,12 @@ class SearchService:
                         provider=provider.name,
                         operation="search_stock_news",
                     )
-                    response = provider.search(query, provider_max_results, days=search_days, **search_kwargs)
+                    provider_query = (
+                        f"{stock_code} {query}"
+                        if isinstance(provider, YahooFinanceNewsProvider)
+                        else query
+                    )
+                    response = provider.search(provider_query, provider_max_results, days=search_days, **search_kwargs)
                 except Exception as exc:
                     self._record_news_search_run(
                         provider=provider.name,
@@ -4336,7 +4591,7 @@ class SearchService:
             SearchResponse 对象
         """
         if event_types is None:
-            if self._is_foreign_stock(stock_code):
+            if self._is_foreign_stock(stock_code) and not self._is_taiwan_stock(stock_code):
                 event_types = ["earnings report", "insider selling", "quarterly results"]
             else:
                 event_types = ["年报预告", "减持公告", "业绩快报"]
@@ -4344,7 +4599,11 @@ class SearchService:
         # Issue #2026: foreign-ticker Chinese display name needs canonical
         # English alias for English event query (single source of truth in
         # src/data/stock_mapping.py).
-        english_aliases = self._foreign_english_query_terms(stock_code, stock_name)
+        english_aliases = (
+            ()
+            if self._is_taiwan_stock(stock_code)
+            else self._foreign_english_query_terms(stock_code, stock_name)
+        )
         effective_name = english_aliases[0] if english_aliases else stock_name
 
         # 构建针对性查询
@@ -4363,7 +4622,7 @@ class SearchService:
         logger.info(f"搜索股票事件: {stock_name}({stock_code}) - {event_types}")
         
         # 依次尝试各个搜索引擎
-        for provider in self._providers:
+        for provider in self._stock_news_providers(query):
             if not provider.is_available:
                 continue
             
@@ -4406,7 +4665,8 @@ class SearchService:
         results = {}
         search_count = 0
 
-        is_foreign = self._is_foreign_stock(stock_code)
+        is_taiwan = self._is_taiwan_stock(stock_code)
+        is_foreign = self._is_foreign_stock(stock_code) and not is_taiwan
         is_index_etf = self.is_index_or_etf(stock_code, stock_name)
 
         if is_foreign:
@@ -4548,9 +4808,23 @@ class SearchService:
                 break
             
             # 选择搜索引擎（轮流使用）
-            available_providers = [p for p in self._providers if p.is_available]
+            base_available_providers = [
+                p for p in self._stock_news_providers(dim["query"]) if p.is_available
+            ]
+            primary_providers = [
+                p for p in base_available_providers if self._is_primary_intel_provider(p)
+            ]
+            candidate_providers = primary_providers or base_available_providers
+            available_providers = [
+                p for p in candidate_providers
+                if not (
+                    isinstance(p, YahooFinanceNewsProvider)
+                    and not p.can_search_query(dim["query"])
+                )
+            ]
             if not available_providers:
-                break
+                logger.info("[情报搜索] %s: 无可用搜索引擎，跳过", dim['desc'])
+                continue
             
             provider = available_providers[provider_index % len(available_providers)]
             provider_index += 1
@@ -4925,6 +5199,7 @@ def get_search_service() -> SearchService:
                     searxng_base_urls=config.searxng_base_urls,
                     searxng_public_instances_enabled=config.searxng_public_instances_enabled,
                     searxng_timeout_seconds=getattr(config, "searxng_timeout_seconds", None),
+                    yahoo_finance_news_enabled=getattr(config, "yahoo_finance_news_enabled", True),
                     news_max_age_days=config.news_max_age_days,
                     news_strategy_profile=getattr(config, "news_strategy_profile", "short"),
                 )

@@ -23,6 +23,8 @@ from src.notification import NotificationService
 
 ZERO_HIT_DISCLOSURE = "⚠️ 本次未获取到可用的新闻面数据，以下结论未纳入新闻维度证据。"
 NO_CHANNEL_DISCLOSURE = "⚠️ 未配置搜索渠道，本次分析未纳入新闻面证据。"
+ZH_TW_ZERO_HIT_DISCLOSURE = "⚠️ 本次未取得可用的消息面資料，以下結論未納入消息面證據。"
+ZH_TW_NO_CHANNEL_DISCLOSURE = "⚠️ 未配置搜尋渠道，本次分析未納入消息面證據。"
 EN_ZERO_HIT_DISCLOSURE = (
     "⚠️ No news data could be retrieved for this run; "
     "the conclusions below do not incorporate news-based evidence."
@@ -312,6 +314,7 @@ class SupportedLanguageDisclosureTestCase(unittest.TestCase):
 
     EXPECTED = {
         "zh": (NO_CHANNEL_DISCLOSURE, ZERO_HIT_DISCLOSURE),
+        "zh-tw": (ZH_TW_NO_CHANNEL_DISCLOSURE, ZH_TW_ZERO_HIT_DISCLOSURE),
         "en": (EN_NO_CHANNEL_DISCLOSURE, EN_ZERO_HIT_DISCLOSURE),
         "ko": (KO_NO_CHANNEL_DISCLOSURE, KO_ZERO_HIT_DISCLOSURE),
     }
